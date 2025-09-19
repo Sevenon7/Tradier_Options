@@ -2,13 +2,12 @@
 """
 LEAPS Overlay Runner (Tradier) — resilient build
 
-Enhancements:
-- Retries + rate-limit awareness for all REST calls.
+- Retries + rate-limit awareness for all REST calls (Tradier minute windows).
 - Correct quotes endpoint for equities & OCC options (with greeks).
-- Intraday VWAP via /v1/markets/timesales using ET cash session, fallback to 'all'.
-- Market clock guard: VWAP set unavailable when the market is closed.
+- Intraday VWAP via /v1/markets/timesales (ET cash session first, fallback to 'all').
+- Market clock guard (VWAP marked unavailable if closed/unknown).
 - Safe indicators (SMA100/RSI/MACD) only when enough bars.
-- Gap screen empty-safe; atomic CSV writes; strict JSON-safe numbers.
+- Gap screen is empty-safe; atomic CSV writes; JSON-safe numbers.
 """
 
 from __future__ import annotations
@@ -76,11 +75,10 @@ def requests_retry_session(
 S = requests_retry_session()
 
 def _rate_limit_rest(resp: requests.Response):
-    """Honor Tradier minute window if we're near empty."""
+    """Honor Tradier minute window if we're near empty. Headers: X-Ratelimit-Available, X-Ratelimit-Expiry."""
     if not resp:
         return
     hdr = {k.lower(): v for k, v in resp.headers.items()}
-    # Tradier docs show 'X-Ratelimit-Available'/'X-Ratelimit-Expiry'
     remain = hdr.get("x-ratelimit-available") or hdr.get("x-ratelimit-remaining")
     expiry = hdr.get("x-ratelimit-expiry")
     try:
@@ -97,10 +95,10 @@ def _rate_limit_rest(resp: requests.Response):
 def get_json(url: str, params: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
     r = S.get(url, headers=HEADERS, params=params or {})
     _rate_limit_rest(r)
-    if r.status_code in (404,):
+    if r.status_code == 404:
         print(f"[warn] 404: {url} {params}")
         return None
-    if r.status_code in (401,):
+    if r.status_code == 401:
         print("[error] 401 Unauthorized from Tradier. Check token scope.")
         return None
     try:
@@ -190,8 +188,7 @@ def mid_from_quote(q: dict) -> float:
 def market_open_now() -> bool | None:
     data = get_json(f"{BASE}/markets/clock")
     if not data or "clock" not in data:
-        # fail soft (assume open in case clock temporarily unavailable)
-        return None
+        return None  # fail soft
     return data["clock"].get("state") == "open"
 
 def get_daily_history(symbol: str, start: str, end: str) -> pd.DataFrame:
@@ -254,7 +251,7 @@ def options_quotes_occ(occs: List[str]) -> dict:
         if occ in out:
             continue
         d = get_json(f"{BASE}/markets/quotes", params={"symbols": occ, "greeks": "true"})
-        if not d: 
+        if not d:
             continue
         rows = d.get("quotes", {}).get("quote", [])
         if isinstance(rows, dict): rows = [rows]
@@ -381,9 +378,7 @@ def main():
         mid = mid_from_quote(q)
         pnl_d = (mid - o["entry"]) * 100 * o["contracts"]
         pnl_p = (mid / o["entry"] - 1) * 100 if o["entry"] else None
-        iv = None
         g = (q.get("greeks") or {})
-        # Tradier reference lists greeks.* fields including IV; keep graceful if absent
         iv = g.get("mid_iv") or g.get("ask_iv") or g.get("bid_iv") or g.get("smv_vol")
 
         pl_rows.append({
