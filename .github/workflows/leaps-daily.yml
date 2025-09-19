@@ -1,13 +1,13 @@
 name: LEAPS Daily Overlay
 
 on:
-  # 11:00 AM PT ≈ 18:00 UTC (DST) and 19:00 UTC (Standard).
+  # 11:00 AM PT ≈ 18:00 UTC (DST) and 19:00 UTC (Standard)
   schedule:
     - cron: '0 18 * * 1-5'
     - cron: '0 19 * * 1-5'
   workflow_dispatch: {}
 
-# Prevent overlapping runs (dual crons, manual triggers, etc.)
+# Prevent overlapping runs
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -19,32 +19,38 @@ jobs:
   run-overlay:
     runs-on: ubuntu-latest
     env:
-      # Map secret once at the job level; script reads TRADIER_TOKEN from env
       TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # >>> NEW STEP: ensure a dependency file exists BEFORE setup-python (required for cache: pip)
+      - name: Ensure requirements.txt for caching
+        run: |
+          if [ ! -f requirements.txt ]; then
+            printf "requests>=2.31,<3\npandas>=2.2,<3\n" > requirements.txt
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: requirements.txt
 
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install requests pandas
+          pip install -r requirements.txt
 
-      # Avoid linter error by NOT using "if: ${{ secrets... }}".
       - name: Mask token (extra safety)
         run: |
           if [ -n "${TRADIER_TOKEN}" ]; then
             echo "::add-mask::${TRADIER_TOKEN}"
           fi
 
-      # Guard: skip second cron if today's folder already exists
+      # Skip second cron if today's folder already exists
       - name: Skip if already ran today
         id: skipcheck
         shell: bash
@@ -63,7 +69,7 @@ jobs:
           set -eo pipefail
           python leaps_batched_cached.py
 
-      - name: Prepare dated folder & move outputs (atomic already in script)
+      - name: Prepare dated folder & move outputs
         if: steps.skipcheck.outputs.already == 'false'
         id: stamp
         shell: bash
@@ -87,7 +93,6 @@ jobs:
           echo "raw_pl=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/option_pl.csv" >> "$GITHUB_OUTPUT"
           echo "raw_gap=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/gapdown_above_100sma.csv" >> "$GITHUB_OUTPUT"
 
-      # Emit JSON digest into the Job Summary for easy copy/paste to ChatGPT
       - name: Build JSON digest for ChatGPT (adds to Summary)
         if: steps.skipcheck.outputs.already == 'false'
         env:
@@ -98,52 +103,34 @@ jobs:
         run: |
           python - << 'PY'
           import os, json, pandas as pd
-
           date_dir = os.environ["DATE_DIR"]
-          raw_overlay = os.environ.get("RAW_OVERLAY","")
-          raw_pl = os.environ.get("RAW_PL","")
-          raw_gap = os.environ.get("RAW_GAP","")
-          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-
-          def read_csv(path):
-              try:
-                  return pd.read_csv(path)
-              except Exception:
-                  return pd.DataFrame()
-
+          def read_csv(p):
+              try: return pd.read_csv(p)
+              except Exception: return pd.DataFrame()
           ov = read_csv(f"{date_dir}/overlay_vwap_macd_rsi.csv")
           pl = read_csv(f"{date_dir}/option_pl.csv")
           gp = read_csv(f"{date_dir}/gapdown_above_100sma.csv")
-
           keep_ov = ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"]
-          ov = ov[[c for c in keep_ov if c in ov.columns]].copy()
-
           keep_pl = ["Contract","OCC","Bid","Ask","Last","MidUsed","Entry","Contracts","P/L($)","P/L(%)","IV"]
-          pl = pl[[c for c in keep_pl if c in pl.columns]].copy()
-
           keep_gp = ["Ticker","Gap%","Close","SMA100"]
+          ov = ov[[c for c in keep_ov if c in ov.columns]].copy()
+          pl = pl[[c for c in keep_pl if c in pl.columns]].copy()
           gp = gp[[c for c in keep_gp if c in gp.columns]].copy()
-
-          def _clean(df):  # JSON-safe (no NaN/Inf)
-              return json.loads(df.to_json(orient="records"))
-
           digest = {
-              "raw_links": {
-                  "overlay": raw_overlay,
-                  "option_pl": raw_pl,
-                  "gap_screen": raw_gap
-              },
-              "overlay": _clean(ov),
-              "option_pl": _clean(pl),
-              "gap_screen": _clean(gp)
+            "raw_links": {
+              "overlay": os.environ.get("RAW_OVERLAY",""),
+              "option_pl": os.environ.get("RAW_PL",""),
+              "gap_screen": os.environ.get("RAW_GAP","")
+            },
+            "overlay": json.loads(ov.to_json(orient="records")),
+            "option_pl": json.loads(pl.to_json(orient="records")),
+            "gap_screen": json.loads(gp.to_json(orient="records")),
           }
-
           block = "```json\n" + json.dumps(digest, indent=2) + "\n```"
           print(block)
-          if summary_path:
-              with open(summary_path, "a", encoding="utf-8") as f:
-                  f.write("### JSON Digest for ChatGPT\n\n")
-                  f.write(block + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("### JSON Digest for ChatGPT\n\n")
+              f.write(block + "\n")
           PY
 
       - name: Append RAW links to job summary
