@@ -1,19 +1,20 @@
 name: LEAPS Daily Overlay
 
 on:
-  # 11:00 AM PT ≈ 18:00 UTC during Daylight Saving, 19:00 UTC during Standard Time.
-  # We'll schedule BOTH, so it fires at 11:00 PT all year.
+  # 11:00 AM PT ≈ 18:00 UTC (DST) and 19:00 UTC (Standard).
+  # We schedule both and guard for duplicates below.
   schedule:
-    - cron: '0 18 * * 1-5'  # PDT window (roughly Mar-Nov)
-    - cron: '0 19 * * 1-5'  # PST window (roughly Nov-Mar)
+    - cron: '0 18 * * 1-5'  # PDT window (roughly Mar–Nov)
+    - cron: '0 19 * * 1-5'  # PST window (roughly Nov–Mar)
   workflow_dispatch: {}      # Manual run button
 
 permissions:
-  contents: write  # needed to commit CSVs back to the repo
+  contents: write            # needed to commit CSVs back into the repo
 
 jobs:
   run-overlay:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -26,59 +27,76 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install requests pandas pyarrow
+          pip install requests pandas
+
+      # Avoids double-runs on DST crossover days
+      - name: Skip if already ran today
+        id: skipcheck
+        run: |
+          DATE_DIR="data/$(date -u +%Y-%m-%d)"
+          if [ -d "$DATE_DIR" ]; then
+            echo "already=true" >> $GITHUB_OUTPUT
+            echo "Run already completed for $DATE_DIR — skipping."
+          else
+            echo "already=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Run overlay script (Tradier)
+        if: steps.skipcheck.outputs.already == 'false'
         env:
           TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
         run: |
+          set -eo pipefail
           python leaps_batched_cached.py
 
-      - name: Stamp outputs into /data/YYYY-MM-DD
+      - name: Prepare dated folder & move outputs
+        if: steps.skipcheck.outputs.already == 'false'
         id: stamp
         run: |
+          set -eo pipefail
           DATE_DIR="data/$(date -u +%Y-%m-%d)"
           mkdir -p "$DATE_DIR"
-          # Move outputs produced by the script (adjust names if you changed them)
-          mv overlay_vwap_macd_rsi.csv "$DATE_DIR/overlay_vwap_macd_rsi.csv"
-          mv option_pl.csv               "$DATE_DIR/option_pl.csv"
-          mv gapdown_above_100sma.csv    "$DATE_DIR/gapdown_above_100sma.csv"
-          # Create a quick human summary
-          echo "# LEAPS Overlay ($(date -u))" > "$DATE_DIR/SUMMARY.md"
-          echo "" >> "$DATE_DIR/SUMMARY.md"
-          echo "Artifacts:" >> "$DATE_DIR/SUMMARY.md"
-          echo "- overlay_vwap_macd_rsi.csv" >> "$DATE_DIR/SUMMARY.md"
-          echo "- option_pl.csv" >> "$DATE_DIR/SUMMARY.md"
-          echo "- gapdown_above_100sma.csv" >> "$DATE_DIR/SUMMARY.md"
+
+          # Move outputs if present; create empty placeholders if not (so commit still succeeds)
+          [ -f overlay_vwap_macd_rsi.csv ] && mv overlay_vwap_macd_rsi.csv "$DATE_DIR/overlay_vwap_macd_rsi.csv" || touch "$DATE_DIR/overlay_vwap_macd_rsi.csv"
+          [ -f option_pl.csv ]               && mv option_pl.csv               "$DATE_DIR/option_pl.csv"               || touch "$DATE_DIR/option_pl.csv"
+          [ -f gapdown_above_100sma.csv ]    && mv gapdown_above_100sma.csv    "$DATE_DIR/gapdown_above_100sma.csv"    || touch "$DATE_DIR/gapdown_above_100sma.csv"
+
+          printf "# LEAPS Overlay (%s UTC)\n\nArtifacts:\n- overlay_vwap_macd_rsi.csv\n- option_pl.csv\n- gapdown_above_100sma.csv\n" "$(date -u)" > "$DATE_DIR/SUMMARY.md"
           echo "date_dir=$DATE_DIR" >> $GITHUB_OUTPUT
 
-      - name: Compute raw URLs
+      - name: Compute RAW URLs (for easy copy/paste)
+        if: steps.skipcheck.outputs.already == 'false'
         id: raw
         run: |
-          DATE_DIR="data/$(date -u +%Y-%m-%d)"
           REPO="${{ github.repository }}"
-          echo "raw1=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/overlay_vwap_macd_rsi.csv" >> $GITHUB_OUTPUT
-          echo "raw2=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/option_pl.csv" >> $GITHUB_OUTPUT
-          echo "raw3=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/gapdown_above_100sma.csv" >> $GITHUB_OUTPUT
+          DATE_DIR="${{ steps.stamp.outputs.date_dir }}"
+          echo "raw_overlay=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/overlay_vwap_macd_rsi.csv" >> $GITHUB_OUTPUT
+          echo "raw_pl=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/option_pl.csv" >> $GITHUB_OUTPUT
+          echo "raw_gap=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/gapdown_above_100sma.csv" >> $GITHUB_OUTPUT
 
-      - name: Append raw links to summary
+      - name: Append RAW links to job summary
+        if: steps.skipcheck.outputs.already == 'false'
         run: |
           {
             echo "### Raw CSV links (UTC $(date -u))"
-            echo "- ${{ steps.raw.outputs.raw1 }}"
-            echo "- ${{ steps.raw.outputs.raw2 }}"
-            echo "- ${{ steps.raw.outputs.raw3 }}"
+            echo "- ${{ steps.raw.outputs.raw_overlay }}"
+            echo "- ${{ steps.raw.outputs.raw_pl }}"
+            echo "- ${{ steps.raw.outputs.raw_gap }}"
           } >> $GITHUB_STEP_SUMMARY
 
-      - name: Commit results
+      - name: Commit results to repo
+        if: steps.skipcheck.outputs.already == 'false'
         run: |
+          set -eo pipefail
           git config user.name  "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
           git add ${{ steps.stamp.outputs.date_dir }}
           git commit -m "LEAPS overlay auto-run: ${{ steps.stamp.outputs.date_dir }}"
           git push
 
-      - name: Upload artifacts (optional but handy)
+      - name: Upload artifacts (redundant but handy)
+        if: steps.skipcheck.outputs.already == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: leaps-report
@@ -87,3 +105,30 @@ jobs:
             ${{ steps.stamp.outputs.date_dir }}/option_pl.csv
             ${{ steps.stamp.outputs.date_dir }}/gapdown_above_100sma.csv
             ${{ steps.stamp.outputs.date_dir }}/SUMMARY.md
+
+      # --- OPTIONAL: Mirror to Google Drive (uncomment and add secrets to use) ---
+      # - name: Install rclone
+      #   if: steps.skipcheck.outputs.already == 'false'
+      #   run: |
+      #     sudo apt-get update -y
+      #     sudo apt-get install -y unzip
+      #     curl -L https://downloads.rclone.org/rclone-current-linux-amd64.zip -o rclone.zip
+      #     unzip -q rclone.zip
+      #     sudo cp rclone-*-linux-amd64/rclone /usr/local/bin/rclone
+      #
+      # - name: Configure rclone for Google Drive (service account)
+      #   if: steps.skipcheck.outputs.already == 'false'
+      #   run: |
+      #     echo '${{ secrets.GDRIVE_SA_JSON }}' > sa.json
+      #     printf "[gdrive]\n" > rclone.conf
+      #     printf "type = drive\n" >> rclone.conf
+      #     printf "scope = drive\n" >> rclone.conf
+      #     printf "service_account_file = %s/sa.json\n" "${{ github.workspace }}" >> rclone.conf
+      #
+      # - name: Upload today's CSVs to Google Drive
+      #   if: steps.skipcheck.outputs.already == 'false'
+      #   env:
+      #     RCLONE_CONFIG: ${{ github.workspace }}/rclone.conf
+      #   run: |
+      #     DATE_DIR="${{ steps.stamp.outputs.date_dir }}"
+      #     rclone copy "$DATE_DIR" gdrive: --drive-root-folder-id "${{ secrets.GDRIVE_FOLDER_ID }}" -v
