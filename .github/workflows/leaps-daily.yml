@@ -1,15 +1,14 @@
 name: LEAPS Daily Overlay
 
 on:
-  # 11:00 AM PT ≈ 18:00 UTC (DST) and 19:00 UTC (Standard).
-  # We schedule both and guard for duplicates below.
+  # 11:00 AM PT ≈ 18:00 UTC (DST) and 19:00 UTC (Standard). Guard duplicates below.
   schedule:
-    - cron: '0 18 * * 1-5'  # PDT window (roughly Mar–Nov)
-    - cron: '0 19 * * 1-5'  # PST window (roughly Nov–Mar)
-  workflow_dispatch: {}      # Manual run button
+    - cron: '0 18 * * 1-5'  # PDT (roughly Mar–Nov)
+    - cron: '0 19 * * 1-5'  # PST (roughly Nov–Mar)
+  workflow_dispatch: {}
 
 permissions:
-  contents: write            # needed to commit CSVs back into the repo
+  contents: write
 
 jobs:
   run-overlay:
@@ -29,7 +28,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pandas
 
-      # Avoids double-runs on DST crossover days
+      # Avoid double-runs on DST crossover days
       - name: Skip if already ran today
         id: skipcheck
         run: |
@@ -39,7 +38,6 @@ jobs:
             echo "Run already completed for $DATE_DIR — skipping."
           else
             echo "already=false" >> $GITHUB_OUTPUT
-          fi
 
       - name: Run overlay script (Tradier)
         if: steps.skipcheck.outputs.already == 'false'
@@ -56,16 +54,13 @@ jobs:
           set -eo pipefail
           DATE_DIR="data/$(date -u +%Y-%m-%d)"
           mkdir -p "$DATE_DIR"
-
-          # Move outputs if present; create empty placeholders if not (so commit still succeeds)
           [ -f overlay_vwap_macd_rsi.csv ] && mv overlay_vwap_macd_rsi.csv "$DATE_DIR/overlay_vwap_macd_rsi.csv" || touch "$DATE_DIR/overlay_vwap_macd_rsi.csv"
           [ -f option_pl.csv ]               && mv option_pl.csv               "$DATE_DIR/option_pl.csv"               || touch "$DATE_DIR/option_pl.csv"
           [ -f gapdown_above_100sma.csv ]    && mv gapdown_above_100sma.csv    "$DATE_DIR/gapdown_above_100sma.csv"    || touch "$DATE_DIR/gapdown_above_100sma.csv"
-
           printf "# LEAPS Overlay (%s UTC)\n\nArtifacts:\n- overlay_vwap_macd_rsi.csv\n- option_pl.csv\n- gapdown_above_100sma.csv\n" "$(date -u)" > "$DATE_DIR/SUMMARY.md"
           echo "date_dir=$DATE_DIR" >> $GITHUB_OUTPUT
 
-      - name: Compute RAW URLs (for easy copy/paste)
+      - name: Compute RAW URLs
         if: steps.skipcheck.outputs.already == 'false'
         id: raw
         run: |
@@ -75,7 +70,46 @@ jobs:
           echo "raw_pl=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/option_pl.csv" >> $GITHUB_OUTPUT
           echo "raw_gap=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/gapdown_above_100sma.csv" >> $GITHUB_OUTPUT
 
-      - name: Append RAW links to job summary
+      # NEW: Emit a compact JSON digest to the job summary for easy copy/paste here
+      - name: Build JSON digest for ChatGPT
+        if: steps.skipcheck.outputs.already == 'false'
+        run: |
+          python - << 'PY'
+          import os, json, pandas as pd
+          d = os.environ["DATE_DIR"] if "DATE_DIR" in os.environ else "${{ steps.stamp.outputs.date_dir }}"
+          def read_csv(path):
+              try: return pd.read_csv(path)
+              except Exception: return pd.DataFrame()
+          ov = read_csv(f"{d}/overlay_vwap_macd_rsi.csv")
+          pl = read_csv(f"{d}/option_pl.csv")
+          gp = read_csv(f"{d}/gapdown_above_100sma.csv")
+
+          # keep only relevant columns (and normalize names if needed)
+          keep_ov = ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"]
+          ov = ov[[c for c in keep_ov if c in ov.columns]].copy()
+
+          keep_pl = ["Contract","OCC","Bid","Ask","Last","MidUsed","Entry","Contracts","P/L($)","P/L(%)","IV"]
+          pl = pl[[c for c in keep_pl if c in pl.columns]].copy()
+
+          keep_gp = ["Ticker","Gap%","Close","SMA100"]
+          gp = gp[[c for c in keep_gp if c in gp.columns]].copy()
+
+          digest = {
+            "raw_links": {
+              "overlay": "${{ steps.raw.outputs.raw_overlay }}",
+              "option_pl": "${{ steps.raw.outputs.raw_pl }}",
+              "gap_screen": "${{ steps.raw.outputs.raw_gap }}"
+            },
+            "overlay": ov.to_dict(orient="records"),
+            "option_pl": pl.to_dict(orient="records"),
+            "gap_screen": gp.to_dict(orient="records"),
+          }
+          print("```json")
+          print(json.dumps(digest, indent=2))
+          print("```")
+          PY
+
+      - name: Append RAW links to summary
         if: steps.skipcheck.outputs.already == 'false'
         run: |
           {
@@ -95,7 +129,7 @@ jobs:
           git commit -m "LEAPS overlay auto-run: ${{ steps.stamp.outputs.date_dir }}"
           git push
 
-      - name: Upload artifacts (redundant but handy)
+      - name: Upload artifacts
         if: steps.skipcheck.outputs.already == 'false'
         uses: actions/upload-artifact@v4
         with:
