@@ -1,13 +1,13 @@
 name: LEAPS Daily Overlay
 
 on:
-  # 11:00 AM PT ≈ 18:00 UTC (DST) and 19:00 UTC (Standard)
+  # 11:00 AM PT ≈ 18:00 UTC (DST) and 19:00 UTC (Standard).
   schedule:
     - cron: '0 18 * * 1-5'
     - cron: '0 19 * * 1-5'
   workflow_dispatch: {}
 
-# Prevent overlapping runs for this workflow on the same ref
+# Prevent overlapping runs (dual crons, manual triggers, etc.)
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -18,6 +18,9 @@ permissions:
 jobs:
   run-overlay:
     runs-on: ubuntu-latest
+    env:
+      # Map secret once at the job level; script reads TRADIER_TOKEN from env
+      TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
 
     steps:
       - name: Checkout repo
@@ -34,9 +37,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests pandas
 
+      # Avoid linter error by NOT using "if: ${{ secrets... }}".
       - name: Mask token (extra safety)
-        if: ${{ secrets.TRADIER_TOKEN != '' }}
-        run: echo "::add-mask::${{ secrets.TRADIER_TOKEN }}"
+        run: |
+          if [ -n "${TRADIER_TOKEN}" ]; then
+            echo "::add-mask::${TRADIER_TOKEN}"
+          fi
 
       # Guard: skip second cron if today's folder already exists
       - name: Skip if already ran today
@@ -53,8 +59,6 @@ jobs:
 
       - name: Run overlay script (Tradier)
         if: steps.skipcheck.outputs.already == 'false'
-        env:
-          TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
         run: |
           set -eo pipefail
           python leaps_batched_cached.py
@@ -120,8 +124,7 @@ jobs:
           keep_gp = ["Ticker","Gap%","Close","SMA100"]
           gp = gp[[c for c in keep_gp if c in gp.columns]].copy()
 
-          # JSON-safe (no NaN/Inf)
-          def _clean(df):
+          def _clean(df):  # JSON-safe (no NaN/Inf)
               return json.loads(df.to_json(orient="records"))
 
           digest = {
