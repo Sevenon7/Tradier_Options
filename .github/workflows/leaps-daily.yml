@@ -52,14 +52,6 @@ jobs:
           echo "- gapdown_above_100sma.csv" >> "$DATE_DIR/SUMMARY.md"
           echo "date_dir=$DATE_DIR" >> $GITHUB_OUTPUT
 
-      - name: Commit results
-        run: |
-          git config user.name  "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add ${{ steps.stamp.outputs.date_dir }}
-          git commit -m "LEAPS overlay auto-run: ${{ steps.stamp.outputs.date_dir }}"
-          git push
-
       - name: Compute raw URLs
         id: raw
         run: |
@@ -77,6 +69,14 @@ jobs:
             echo "- ${{ steps.raw.outputs.raw2 }}"
             echo "- ${{ steps.raw.outputs.raw3 }}"
           } >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit results
+        run: |
+          git config user.name  "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add ${{ steps.stamp.outputs.date_dir }}
+          git commit -m "LEAPS overlay auto-run: ${{ steps.stamp.outputs.date_dir }}"
+          git push
 
       - name: Upload artifacts (optional but handy)
         uses: actions/upload-artifact@v4
