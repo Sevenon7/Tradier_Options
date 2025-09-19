@@ -60,6 +60,24 @@ jobs:
           git commit -m "LEAPS overlay auto-run: ${{ steps.stamp.outputs.date_dir }}"
           git push
 
+      - name: Compute raw URLs
+        id: raw
+        run: |
+          DATE_DIR="data/$(date -u +%Y-%m-%d)"
+          REPO="${{ github.repository }}"
+          echo "raw1=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/overlay_vwap_macd_rsi.csv" >> $GITHUB_OUTPUT
+          echo "raw2=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/option_pl.csv" >> $GITHUB_OUTPUT
+          echo "raw3=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/gapdown_above_100sma.csv" >> $GITHUB_OUTPUT
+
+      - name: Append raw links to summary
+        run: |
+          {
+            echo "### Raw CSV links (UTC $(date -u))"
+            echo "- ${{ steps.raw.outputs.raw1 }}"
+            echo "- ${{ steps.raw.outputs.raw2 }}"
+            echo "- ${{ steps.raw.outputs.raw3 }}"
+          } >> $GITHUB_STEP_SUMMARY
+
       - name: Upload artifacts (optional but handy)
         uses: actions/upload-artifact@v4
         with:
