@@ -1,0 +1,195 @@
+{
+  "generated_by": "consumer_latest_reader.py",
+  "generated_utc": "2025-09-24T23:34:15Z",
+  "raw_links": {
+    "overlay": "https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-24/overlay_vwap_macd_rsi.csv",
+    "option_pl": "https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-24/option_pl.csv",
+    "gap_screen": "https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-24/gapdown_above_100sma.csv",
+    "ready": "https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-24/READY",
+    "latest": "https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/latest.json"
+  },
+  "overlay": [
+    {
+      "Ticker": "AMD",
+      "RSI14": 49.51,
+      "MACD>Signal": true,
+      "VWAP": 161.5549,
+      "LastPx": 161.44,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 144.032,
+      "Gap%": 1.29,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "ASTS",
+      "RSI14": 73.4,
+      "MACD>Signal": true,
+      "VWAP": 54.6029,
+      "LastPx": 53.98,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 41.8594,
+      "Gap%": 0.33,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "BBAI",
+      "RSI14": 82.96,
+      "MACD>Signal": true,
+      "VWAP": 7.7922,
+      "LastPx": 7.56,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 5.4233,
+      "Gap%": 0.63,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "META",
+      "RSI14": 53.26,
+      "MACD>Signal": false,
+      "VWAP": 756.4272,
+      "LastPx": 754.68,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 711.9238,
+      "Gap%": 0.28,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "MSFT",
+      "RSI14": 50.09,
+      "MACD>Signal": true,
+      "VWAP": 508.9569,
+      "LastPx": 508.0614,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 491.518,
+      "Gap%": 0.23,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "MSTR",
+      "RSI14": 50.33,
+      "MACD>Signal": true,
+      "VWAP": 332.1991,
+      "LastPx": 328.17,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 380.1629,
+      "Gap%": 0.87,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "MSTU",
+      "RSI14": 47.61,
+      "MACD>Signal": true,
+      "VWAP": 5.0218,
+      "LastPx": 4.91,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 7.5248,
+      "Gap%": 1.73,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "NVDA",
+      "RSI14": 55.95,
+      "MACD>Signal": true,
+      "VWAP": 177.5505,
+      "LastPx": 176.8201,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 159.0711,
+      "Gap%": 0.75,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "PLTR",
+      "RSI14": 70.95,
+      "MACD>Signal": true,
+      "VWAP": 180.2614,
+      "LastPx": 178.5899,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 148.2185,
+      "Gap%": 0.75,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "QQQ",
+      "RSI14": 76.81,
+      "MACD>Signal": true,
+      "VWAP": 596.3313,
+      "LastPx": 595.22,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 550.8483,
+      "Gap%": 0.23,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "RDDT",
+      "RSI14": 53.96,
+      "MACD>Signal": false,
+      "VWAP": 239.7335,
+      "LastPx": 240.66,
+      "Px_vs_VWAP": "Above",
+      "SMA100": 168.5335,
+      "Gap%": 1.71,
+      "Guidance": "HOLD",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "RKLB",
+      "RSI14": 60.15,
+      "MACD>Signal": true,
+      "VWAP": 49.7533,
+      "LastPx": 49.474,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 37.9605,
+      "Gap%": -2.11,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "UUUU",
+      "RSI14": 83.4,
+      "MACD>Signal": true,
+      "VWAP": 17.8311,
+      "LastPx": 17.505,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 8.2031,
+      "Gap%": 3.96,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    },
+    {
+      "Ticker": "VST",
+      "RSI14": 59.84,
+      "MACD>Signal": true,
+      "VWAP": 203.5711,
+      "LastPx": 202.975,
+      "Px_vs_VWAP": "Below",
+      "SMA100": 184.7774,
+      "Gap%": -0.48,
+      "Guidance": "TRIM",
+      "MarketOpen": true
+    }
+  ],
+  "option_pl": [],
+  "gap_screen": [
+    {
+      "Ticker": "RKLB",
+      "Gap%": -2.11,
+      "Close": 49.4601,
+      "SMA100": 37.960451
+    }
+  ],
+  "notes": [
+    "Pointer latest.json missing or invalid; falling back to date guess.",
+    "Using fallback date_dir=data/2025-09-24",
+    "READY flag present: False"
+  ]
+}
