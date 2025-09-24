@@ -1,0 +1,144 @@
+name: LEAPS Producer (CSV + latest.json + READY)
+
+on:
+  # Two UTC crons so local target ~10:45 AM PT works year-round.
+  schedule:
+    - cron: '45 17 * * 1-5'  # ~10:45 AM PT during PDT
+    - cron: '45 18 * * 1-5'  # ~10:45 AM PT during PST
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-csvs:
+    runs-on: ubuntu-latest
+    env:
+      TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
+      DESIRED_PT_TIME: "10:45"   # local target time in America/Los_Angeles
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # --- Time Gate: only continue if local PT time matches DESIRED_PT_TIME ---
+      - name: Time Gate (America/Los_Angeles)
+        id: timegate
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run -> bypassing time gate."
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          NOW_PT=$(TZ=America/Los_Angeles date +%H:%M)
+          TARGET="${DESIRED_PT_TIME}"
+          echo "Now PT: $NOW_PT | Target PT: $TARGET"
+          if [ "$NOW_PT" = "$TARGET" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Not target PT time -> fast exit."
+          fi
+
+      - name: Ensure requirements.txt for caching
+        if: steps.timegate.outputs.should_run == 'true'
+        run: |
+          if [ ! -f requirements.txt ]; then
+            printf "requests>=2.31,<3\npandas>=2.2,<3\n" > requirements.txt
+          fi
+
+      - name: Set up Python
+        if: steps.timegate.outputs.should_run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Install deps
+        if: steps.timegate.outputs.should_run == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Mask token (extra safety)
+        if: steps.timegate.outputs.should_run == 'true'
+        run: |
+          if [ -n "${TRADIER_TOKEN}" ]; then
+            echo "::add-mask::${TRADIER_TOKEN}"
+          fi
+
+      # Avoid duplicate same-day runs even if cron misfires
+      - name: Skip if already ran today (UTC)
+        if: steps.timegate.outputs.should_run == 'true'
+        id: skipcheck
+        shell: bash
+        run: |
+          DATE_DIR="data/$(date -u +%Y-%m-%d)"
+          if [ -d "$DATE_DIR" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "Run already completed for $DATE_DIR — skipping."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run overlay script (Tradier → CSVs)
+        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
+        run: |
+          set -eo pipefail
+          python leaps_batched_cached.py
+
+      - name: Move outputs into dated folder
+        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
+        id: stamp
+        shell: bash
+        run: |
+          DATE_DIR="data/$(date -u +%Y-%m-%d)"
+          mkdir -p "$DATE_DIR"
+
+          [ -f overlay_vwap_macd_rsi.csv ] && mv overlay_vwap_macd_rsi.csv "$DATE_DIR/overlay_vwap_macd_rsi.csv" || : > "$DATE_DIR/overlay_vwap_macd_rsi.csv"
+          [ -f option_pl.csv ]               && mv option_pl.csv               "$DATE_DIR/option_pl.csv"               || : > "$DATE_DIR/option_pl.csv"
+          [ -f gapdown_above_100sma.csv ]    && mv gapdown_above_100sma.csv    "$DATE_DIR/gapdown_above_100sma.csv"    || : > "$DATE_DIR/gapdown_above_100sma.csv"
+
+          printf "# LEAPS Overlay (%s UTC)\n\nArtifacts:\n- overlay_vwap_macd_rsi.csv\n- option_pl.csv\n- gapdown_above_100sma.csv\n" "$(date -u)" > "$DATE_DIR/SUMMARY.md"
+          echo "date_dir=$DATE_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Mark folder READY
+        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
+        run: |
+          DATE_DIR="${{ steps.stamp.outputs.date_dir }}"
+          : > "$DATE_DIR/READY"
+
+      - name: Write latest.json pointer
+        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
+        run: |
+          DATE_DIR="${{ steps.stamp.outputs.date_dir }}"
+          GEN_TS="$(date -u --iso-8601=seconds)"
+          printf '{"date_dir":"%s","generated_utc":"%s"}\n' "$DATE_DIR" "$GEN_TS" > latest.json
+
+      - name: Compute RAW URLs (summary)
+        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
+        id: raw
+        shell: bash
+        run: |
+          REPO="${{ github.repository }}"
+          DATE_DIR="${{ steps.stamp.outputs.date_dir }}"
+          echo "raw_overlay=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/overlay_vwap_macd_rsi.csv" >> "$GITHUB_OUTPUT"
+          echo "raw_pl=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/option_pl.csv" >> "$GITHUB_OUTPUT"
+          echo "raw_gap=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/gapdown_above_100sma.csv" >> "$GITHUB_OUTPUT"
+          echo "raw_latest=https://raw.githubusercontent.com/${REPO}/main/latest.json" >> "$GITHUB_OUTPUT"
+
+      - name: Commit results (date folder + latest.json)
+        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
+        run: |
+          set -eo pipefail
+          git config user.name  "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add latest.json "${{ steps.stamp.outputs.date_dir }}"
+          git commit -m "LEAPS producer: ${{ steps.stamp.outputs.date_dir }} + latest.json"
+          git push
