@@ -73,7 +73,6 @@ jobs:
             echo "::add-mask::${TRADIER_TOKEN}"
           fi
 
-      # Avoid duplicate same-day runs even if cron misfires
       - name: Skip if already ran today (UTC)
         if: steps.timegate.outputs.should_run == 'true'
         id: skipcheck
@@ -87,11 +86,19 @@ jobs:
             echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run overlay script (Tradier → CSVs)
+      - name: Run overlay script (Tradier → overlay & gap CSVs)
         if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
         run: |
           set -eo pipefail
           python leaps_batched_cached.py
+
+      - name: Build Actual Option P/L (fallback-safe)
+        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
+        env:
+          TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
+        run: |
+          # Guarantees option_pl.csv exists even if quotes 404 or lack bid/ask.
+          python tools/option_pl_builder.py
 
       - name: Move outputs into dated folder
         if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
@@ -106,6 +113,7 @@ jobs:
           [ -f gapdown_above_100sma.csv ]    && mv gapdown_above_100sma.csv    "$DATE_DIR/gapdown_above_100sma.csv"    || : > "$DATE_DIR/gapdown_above_100sma.csv"
 
           printf "# LEAPS Overlay (%s UTC)\n\nArtifacts:\n- overlay_vwap_macd_rsi.csv\n- option_pl.csv\n- gapdown_above_100sma.csv\n" "$(date -u)" > "$DATE_DIR/SUMMARY.md"
+
           echo "date_dir=$DATE_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Mark folder READY
@@ -121,18 +129,6 @@ jobs:
           GEN_TS="$(date -u --iso-8601=seconds)"
           printf '{"date_dir":"%s","generated_utc":"%s"}\n' "$DATE_DIR" "$GEN_TS" > latest.json
 
-      - name: Compute RAW URLs (summary)
-        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
-        id: raw
-        shell: bash
-        run: |
-          REPO="${{ github.repository }}"
-          DATE_DIR="${{ steps.stamp.outputs.date_dir }}"
-          echo "raw_overlay=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/overlay_vwap_macd_rsi.csv" >> "$GITHUB_OUTPUT"
-          echo "raw_pl=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/option_pl.csv" >> "$GITHUB_OUTPUT"
-          echo "raw_gap=https://raw.githubusercontent.com/${REPO}/main/${DATE_DIR}/gapdown_above_100sma.csv" >> "$GITHUB_OUTPUT"
-          echo "raw_latest=https://raw.githubusercontent.com/${REPO}/main/latest.json" >> "$GITHUB_OUTPUT"
-
       - name: Commit results (date folder + latest.json)
         if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
         run: |
@@ -140,5 +136,5 @@ jobs:
           git config user.name  "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
           git add latest.json "${{ steps.stamp.outputs.date_dir }}"
-          git commit -m "LEAPS producer: ${{ steps.stamp.outputs.date_dir }} + latest.json"
+          git commit -m "LEAPS producer: ${{ steps.stamp.outputs.date_dir }} + latest.json" || true
           git push
