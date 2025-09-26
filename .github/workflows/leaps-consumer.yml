@@ -1,4 +1,4 @@
-name: LEAPS Consumer (read latest.json + emit digest)
+name: LEAPS Consumer (read latest.json + emit digest + VWAP heads-up)
 
 on:
   schedule:
@@ -28,7 +28,6 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manual run -> bypassing time gate."
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -45,7 +44,7 @@ jobs:
       - name: Ensure requirements.txt
         if: steps.timegate.outputs.should_run == 'true'
         run: |
-          if [ ! -f requirements.txt ]; then
+          if [ ! -f requirements.txt ] ; then
             printf "requests>=2.31,<3\npandas>=2.2,<3\n" > requirements.txt
           fi
 
@@ -63,7 +62,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run consumer (read latest.json, build digest)
+      - name: Run consumer (build digest + VWAP report)
         if: steps.timegate.outputs.should_run == 'true'
         env:
           REPO: Sevenon7/Tradier_Options
@@ -78,12 +77,45 @@ jobs:
           cat analysis_digest.json >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
+      - name: VWAP Missing Heads-up (warnings + summary)
+        if: steps.timegate.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          if [ -f vwap_missing.json ]; then
+            COUNT=$(python - <<'PY'
+import json
+with open("vwap_missing.json") as f:
+    j=json.load(f)
+print(j.get("count",0))
+PY
+)
+            echo "VWAP-missing count: $COUNT"
+            echo "### VWAP Missing Report" >> $GITHUB_STEP_SUMMARY
+            if [ -f vwap_missing.md ]; then
+              cat vwap_missing.md >> $GITHUB_STEP_SUMMARY
+            fi
+            if [ "$COUNT" -gt 0 ]; then
+              # Emit one warning per ticker to make it loud in the Actions UI
+              python - <<'PY'
+import json, sys
+with open("vwap_missing.json") as f:
+    j=json.load(f)
+for r in j.get("tickers", []):
+    t=r.get("Ticker","?")
+    note=r.get("Note","VWAP missing")
+    print(f"::warning title=VWAP Missing::{t}: {note}")
+PY
+            fi
+          else
+            echo "No vwap_missing.json present."
+          fi
+
       - name: Commit digest files
         if: steps.timegate.outputs.should_run == 'true'
         run: |
           set -eo pipefail
           git config user.name  "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add analysis_digest.json analysis_digest.md
-          git commit -m "Consumer digest $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
+          git add analysis_digest.json analysis_digest.md vwap_missing.json vwap_missing.md
+          git commit -m "Consumer digest + VWAP report $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
           git push
