@@ -1,10 +1,9 @@
 name: LEAPS Producer (CSV + latest.json + READY)
 
 on:
-  # Two UTC crons so local target ~10:45 AM PT works year-round.
   schedule:
-    - cron: '45 17 * * 1-5'  # ~10:45 AM PT during PDT
-    - cron: '45 18 * * 1-5'  # ~10:45 AM PT during PST
+    - cron: '45 17 * * 1-5'  # ~10:45 AM PT (PDT)
+    - cron: '45 18 * * 1-5'  # ~10:45 AM PT (PST)
   workflow_dispatch: {}
 
 concurrency:
@@ -19,40 +18,31 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
-      DESIRED_PT_TIME: "10:45"   # local target time in America/Los_Angeles
+      DESIRED_PT_TIME: "10:45"
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # --- Time Gate: only continue if local PT time matches DESIRED_PT_TIME ---
       - name: Time Gate (America/Los_Angeles)
         id: timegate
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manual run -> bypassing time gate."
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           NOW_PT=$(TZ=America/Los_Angeles date +%H:%M)
-          TARGET="${DESIRED_PT_TIME}"
-          echo "Now PT: $NOW_PT | Target PT: $TARGET"
-          if [ "$NOW_PT" = "$TARGET" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Not target PT time -> fast exit."
-          fi
+          [ "$NOW_PT" = "$DESIRED_PT_TIME" ] && echo "should_run=true" >> "$GITHUB_OUTPUT" || { echo "should_run=false" >> "$GITHUB_OUTPUT"; echo "Not target PT time -> exit."; }
 
-      - name: Ensure requirements.txt for caching
+      - name: Ensure requirements.txt
         if: steps.timegate.outputs.should_run == 'true'
         run: |
           if [ ! -f requirements.txt ]; then
             printf "requests>=2.31,<3\npandas>=2.2,<3\n" > requirements.txt
           fi
 
-      - name: Set up Python
+      - name: Setup Python
         if: steps.timegate.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
@@ -66,12 +56,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Mask token (extra safety)
+      - name: Mask token
         if: steps.timegate.outputs.should_run == 'true'
         run: |
-          if [ -n "${TRADIER_TOKEN}" ]; then
-            echo "::add-mask::${TRADIER_TOKEN}"
-          fi
+          if [ -n "${TRADIER_TOKEN}" ]; then echo "::add-mask::${TRADIER_TOKEN}"; fi
 
       - name: Skip if already ran today (UTC)
         if: steps.timegate.outputs.should_run == 'true'
@@ -86,7 +74,7 @@ jobs:
             echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run overlay script (Tradier → overlay & gap CSVs)
+      - name: Run overlay script (your original)
         if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
         run: |
           set -eo pipefail
@@ -97,8 +85,14 @@ jobs:
         env:
           TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
         run: |
-          # Guarantees option_pl.csv exists even if quotes 404 or lack bid/ask.
           python tools/option_pl_builder.py
+
+      - name: Enrich overlay with intraday VWAP
+        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
+        env:
+          TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
+        run: |
+          python tools/enrich_overlay_with_vwap.py --overlay overlay_vwap_macd_rsi.csv
 
       - name: Move outputs into dated folder
         if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
@@ -113,14 +107,8 @@ jobs:
           [ -f gapdown_above_100sma.csv ]    && mv gapdown_above_100sma.csv    "$DATE_DIR/gapdown_above_100sma.csv"    || : > "$DATE_DIR/gapdown_above_100sma.csv"
 
           printf "# LEAPS Overlay (%s UTC)\n\nArtifacts:\n- overlay_vwap_macd_rsi.csv\n- option_pl.csv\n- gapdown_above_100sma.csv\n" "$(date -u)" > "$DATE_DIR/SUMMARY.md"
-
-          echo "date_dir=$DATE_DIR" >> "$GITHUB_OUTPUT"
-
-      - name: Mark folder READY
-        if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
-        run: |
-          DATE_DIR="${{ steps.stamp.outputs.date_dir }}"
           : > "$DATE_DIR/READY"
+          echo "date_dir=$DATE_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Write latest.json pointer
         if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
@@ -129,7 +117,7 @@ jobs:
           GEN_TS="$(date -u --iso-8601=seconds)"
           printf '{"date_dir":"%s","generated_utc":"%s"}\n' "$DATE_DIR" "$GEN_TS" > latest.json
 
-      - name: Commit results (date folder + latest.json)
+      - name: Commit results
         if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
         run: |
           set -eo pipefail
