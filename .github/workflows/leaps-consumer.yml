@@ -71,40 +71,27 @@ jobs:
           RETRY_SLEEP: "1.2"
         run: |
           python consumer_latest_reader.py
-          echo "### Consumer Output ($(date -u))" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-          cat analysis_digest.json >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### Consumer Output ($(date -u))"
+            echo
+            echo '```json'
+            cat analysis_digest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: VWAP Missing Heads-up (warnings + summary)
         if: steps.timegate.outputs.should_run == 'true'
         shell: bash
         run: |
           if [ -f vwap_missing.json ]; then
-            COUNT=$(python - <<'PY'
-import json
-with open("vwap_missing.json") as f:
-    j=json.load(f)
-print(j.get("count",0))
-PY
-)
+            COUNT=$(python -c 'import json;print(json.load(open("vwap_missing.json")).get("count",0))')
             echo "VWAP-missing count: $COUNT"
-            echo "### VWAP Missing Report" >> $GITHUB_STEP_SUMMARY
+            echo "### VWAP Missing Report" >> "$GITHUB_STEP_SUMMARY"
             if [ -f vwap_missing.md ]; then
-              cat vwap_missing.md >> $GITHUB_STEP_SUMMARY
+              cat vwap_missing.md >> "$GITHUB_STEP_SUMMARY"
             fi
             if [ "$COUNT" -gt 0 ]; then
-              # Emit one warning per ticker to make it loud in the Actions UI
-              python - <<'PY'
-import json, sys
-with open("vwap_missing.json") as f:
-    j=json.load(f)
-for r in j.get("tickers", []):
-    t=r.get("Ticker","?")
-    note=r.get("Note","VWAP missing")
-    print(f"::warning title=VWAP Missing::{t}: {note}")
-PY
+              python tools/vwap_warn.py
             fi
           else
             echo "No vwap_missing.json present."
