@@ -1,0 +1,133 @@
+{
+  "date_dir": "data/2025-09-26",
+  "count": 14,
+  "tickers": [
+    {
+      "Ticker": "AMD",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 159.46,
+      "RSI14": 64.91,
+      "MACD>Signal": true,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "ASTS",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 49.09,
+      "RSI14": 64.58,
+      "MACD>Signal": true,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "BBAI",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 6.73,
+      "RSI14": 69.96,
+      "MACD>Signal": true,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "META",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 743.75,
+      "RSI14": 46.15,
+      "MACD>Signal": false,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "MSFT",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 511.46,
+      "RSI14": 62.59,
+      "MACD>Signal": true,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "MSTR",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 309.06,
+      "RSI14": 39.77,
+      "MACD>Signal": false,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "MSTU",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 4.31,
+      "RSI14": 37.18,
+      "MACD>Signal": false,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "NVDA",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 178.19,
+      "RSI14": 62.82,
+      "MACD>Signal": true,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "PLTR",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 177.57,
+      "RSI14": 72.13,
+      "MACD>Signal": true,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "QQQ",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 595.97,
+      "RSI14": 72.62,
+      "MACD>Signal": true,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "RDDT",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 240.11,
+      "RSI14": 55.12,
+      "MACD>Signal": false,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "RKLB",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 46.26,
+      "RSI14": 47.58,
+      "MACD>Signal": false,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "UUUU",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 16.71,
+      "RSI14": 76.63,
+      "MACD>Signal": true,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    },
+    {
+      "Ticker": "VST",
+      "VWAP": null,
+      "Px_vs_VWAP": "Unknown",
+      "LastPx": 207.22,
+      "RSI14": 63.24,
+      "MACD>Signal": false,
+      "Note": "VWAP missing or Px_vs_VWAP=Unknown"
+    }
+  ],
+  "generated_utc": "2025-09-26T23:57:21Z"
+}
