@@ -1,42 +1,44 @@
 # Analysis Digest
 
-**date_dir:** `data/2025-09-26`  
-**generated_utc:** 2025-09-26T23:57:21Z  
+**date_dir:** `data/2025-09-29`  
+**generated_utc:** 2025-09-29T18:13:12Z  
 **latest.json:** https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/latest.json
 
 ### Raw links
 
-- overlay: https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-26/overlay_vwap_macd_rsi.csv
-- option_pl: https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-26/option_pl.csv
-- gap_screen: https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-26/gapdown_above_100sma.csv
-- ready: https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-26/READY
+- overlay: https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-29/overlay_vwap_macd_rsi.csv
+- option_pl: https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-29/option_pl.csv
+- gap_screen: https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-29/gapdown_above_100sma.csv
+- ready: https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/data/2025-09-29/READY
 
 ## Overlay (VWAP/MACD/RSI)
 | Ticker | RSI14 | MACD>Signal | VWAP | LastPx | Px_vs_VWAP | SMA100 | Gap% | Guidance |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| AMD | 64.91 | True |  | 159.46 | Unknown | 145.2398 | -0.47 | HOLD |
-| ASTS | 64.58 | True |  | 49.09 | Unknown | 42.3379 | 1.66 | HOLD |
-| BBAI | 69.96 | True |  | 6.73 | Unknown | 5.4966 | 0.28 | HOLD |
-| META | 46.15 | False |  | 743.75 | Unknown | 714.9466 | 0.15 | HOLD |
-| MSFT | 62.59 | True |  | 511.46 | Unknown | 493.0091 | 0.6 | HOLD |
-| MSTR | 39.77 | False |  | 309.06 | Unknown | 378.4034 | 0.2 | HOLD |
-| MSTU | 37.18 | False |  | 4.31 | Unknown | 7.4339 | -0.12 | HOLD |
-| NVDA | 62.82 | True |  | 178.19 | Unknown | 160.3482 | 0.27 | HOLD |
-| PLTR | 72.13 | True |  | 177.57 | Unknown | 149.3148 | -0.04 | HOLD |
-| QQQ | 72.62 | True |  | 595.97 | Unknown | 553.0044 | 0.14 | HOLD |
-| RDDT | 55.12 | False |  | 240.11 | Unknown | 170.9108 | 0.57 | HOLD |
-| RKLB | 47.58 | False |  | 46.26 | Unknown | 38.4269 | 1.44 | HOLD |
-| UUUU | 76.63 | True |  | 16.71 | Unknown | 8.4448 | 1.45 | HOLD |
-| VST | 63.24 | False |  | 207.22 | Unknown | 186.0639 | -0.21 | HOLD |
+| AMD | 63.77 | True | 162.5595 | 163.0087 | Above | 145.8837 | 0.41 | HOLD |
+| ASTS | 75.44 | True | 50.6709 | 49.8733 | Below | 42.5857 | 1.77 | TRIM |
+| BBAI | 67.99 | True | 6.5778 | 6.5277 | Below | 5.531 | 2.08 | TRIM |
+| META | 38.53 | False | 746.8408 | 743.08 | Below | 716.5048 | 0.67 | EXIT |
+| MSFT | 64.31 | True | 514.4107 | 514.225 | Below | 493.8181 | 0.01 | TRIM |
+| MSTR | 48.9 | True | 320.9547 | 325.945 | Above | 377.8068 | 1.51 | HOLD |
+| MSTU | 46.2 | True | 4.6218 | 4.765 | Above | 7.3971 | 3.02 | HOLD |
+| NVDA | 64.08 | True | 182.6466 | 181.9956 | Below | 161.0327 | 1.25 | TRIM |
+| PLTR | 68.72 | True | 179.0695 | 178.55 | Below | 150.0116 | 1.17 | TRIM |
+| QQQ | 73.54 | True | 599.9691 | 598.94 | Below | 554.1796 | 0.53 | TRIM |
+| RDDT | 50.27 | False | 243.1207 | 240.6836 | Below | 172.2177 | 1.95 | TRIM |
+| RKLB | 50.29 | False | 47.2171 | 47.2 | Below | 38.6754 | 2.46 | TRIM |
+| UUUU | 68.82 | True | 16.6347 | 16.22 | Below | 8.5609 | 3.35 | TRIM |
+| VST | 56.25 | False | 202.7823 | 202.695 | Below | 186.6428 | -2.52 | TRIM |
 
 ## Actual Option P/L
 | Contract | OCC | Bid | Ask | Last | MidUsed | Entry | Contracts | P/L($) | P/L(%) | IV | source | quote_status | spot_status | spot | strike | type | root | expiry | note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| META 700C Feb '26 | META260220C00700000 |  |  |  | 43.75 | 109.13 | 1 | -6538.0 | -59.91 |  | intrinsic | error | ok | 743.75 | 700.0 | CALL | META | 2026-02-20 |  |
-| MSTU 5C Mar '26 | MSTU260320C00005000 |  |  |  | 0.0 | 1.86 | 20 | -3720.0 | -100.0 |  | intrinsic | error | ok | 4.31 | 5.0 | CALL | MSTU | 2026-03-20 |  |
+| META 700C Feb '26 | META260220C00700000 |  |  |  | 43.11 | 109.13 | 1 | -6602.0 | -60.5 |  | intrinsic | error | ok | 743.11 | 700.0 | CALL | META | 2026-02-20 |  |
+| MSTU 5C Mar '26 | MSTU260320C00005000 |  |  |  | 0.0 | 1.86 | 20 | -3720.0 | -100.0 |  | intrinsic | error | ok | 4.77 | 5.0 | CALL | MSTU | 2026-03-20 |  |
 
 ## Gap Down ≥ -1% & Above 100-SMA
-_No data_
+| Ticker | Gap% | Close | SMA100 |
+| --- | --- | --- | --- |
+| VST | -2.52 | 202.695 | 186.64284 |
 
 ### Notes
 - Pointer freshness <=24h: True
