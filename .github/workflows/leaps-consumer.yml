@@ -34,7 +34,7 @@ jobs:
           NOW_PT=$(TZ=America/Los_Angeles date +%H:%M)
           TARGET="${DESIRED_PT_TIME}"
           echo "Now PT: $NOW_PT | Target PT: $TARGET"
-          if [ "$NOW_PT" = "$TARGET" ]; then
+          if [ "$NOW_PT" >= "$TARGET" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
