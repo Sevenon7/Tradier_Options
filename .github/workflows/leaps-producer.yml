@@ -2,8 +2,8 @@ name: LEAPS Producer (CSV + latest.json + READY)
 
 on:
   schedule:
-    - cron: '45 17 * * 1-5'  # ~10:45 AM PT (PDT)
-    - cron: '45 18 * * 1-5'  # ~10:45 AM PT (PST)
+    - cron: '50 17 * * 1-5'  # ~10:45 AM PT (PDT)
+    - cron: '50 18 * * 1-5'  # ~10:45 AM PT (PST)
   workflow_dispatch: {}
 
 concurrency:
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
-      DESIRED_PT_TIME: "10:45"
+      DESIRED_PT_TIME: "10:50"
 
     steps:
       - name: Checkout repo
@@ -33,7 +33,7 @@ jobs:
             exit 0
           fi
           NOW_PT=$(TZ=America/Los_Angeles date +%H:%M)
-          [ "$NOW_PT" = "$DESIRED_PT_TIME" ] && echo "should_run=true" >> "$GITHUB_OUTPUT" || { echo "should_run=false" >> "$GITHUB_OUTPUT"; echo "Not target PT time -> exit."; }
+          [ "$NOW_PT" >= "$DESIRED_PT_TIME" ] && echo "should_run=true" >> "$GITHUB_OUTPUT" || { echo "should_run=false" >> "$GITHUB_OUTPUT"; echo "Not target PT time -> exit."; }
 
       - name: Ensure requirements.txt
         if: steps.timegate.outputs.should_run == 'true'
