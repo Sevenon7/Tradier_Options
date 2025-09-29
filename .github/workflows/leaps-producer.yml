@@ -92,7 +92,7 @@ jobs:
         env:
           TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
         run: |
-          python tools/enrich_overlay_with_vwap.py --overlay overlay_vwap_macd_rsi.csv
+          python -m tools.enrich_overlay_with_vwap --overlay overlay_vwap_macd_rsi.csv
 
       - name: Move outputs into dated folder
         if: steps.timegate.outputs.should_run == 'true' && steps.skipcheck.outputs.already == 'false'
