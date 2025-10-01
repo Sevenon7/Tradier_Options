@@ -32,17 +32,45 @@ jobs:
         id: timegate
         shell: bash
         run: |
+          set -euo pipefail
+      
+          # Manual runs always allowed.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch -> running."
             exit 0
           fi
-          NOW_PT=$(TZ=America/Los_Angeles date +%H:%M)
-          echo "Now PT: $NOW_PT | Target PT: ${DESIRED_PT_TIME}"
-          if [ "$NOW_PT" -ge "${DESIRED_PT_TIME}" ]; then
+      
+          # === Config from env ===
+          TARGET_PT="${DESIRED_PT_TIME:-10:50}"   # desired local PT time (fallback if env missing)
+          WINDOW="${WINDOW_MIN:-3}"               # ± minutes window
+      
+          # Validate HH:MM format (best effort)
+          if ! [[ "$TARGET_PT" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+            echo "Bad DESIRED_PT_TIME='$TARGET_PT' (expect HH:MM). Using 10:50."
+            TARGET_PT="10:50"
+          fi
+      
+          # === Convert PT clock to integer minutes ===
+          NOW_H=$(TZ=America/Los_Angeles date +%H)
+          NOW_M=$(TZ=America/Los_Angeles date +%M)
+          NOW_MIN=$((10#$NOW_H*60 + 10#$NOW_M))   # 10# avoids octal gotchas
+      
+          T_H=${TARGET_PT%:*}
+          T_M=${TARGET_PT#*:}
+          T_MIN=$((10#$T_H*60 + 10#$T_M))
+      
+          # absolute difference
+          DIFF=$(( NOW_MIN - T_MIN ))
+          if [ $DIFF -lt 0 ]; then DIFF=$(( -DIFF )); fi
+      
+          echo "Now PT: ${NOW_H}:${NOW_M} | Target PT: ${TARGET_PT} | |Δ|min: ${DIFF}"
+      
+          if [ $DIFF -le $WINDOW ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Not target PT time -> fast exit."
+            echo "Not within ±${WINDOW} minutes of target PT — fast exit."
           fi
 
       - name: Ensure requirements.txt
