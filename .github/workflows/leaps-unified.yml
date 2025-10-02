@@ -17,7 +17,8 @@ jobs:
   run-all:
     runs-on: ubuntu-latest
     env:
-      DESIRED_PT_TIME: "10:50"
+      DESIRED_PT_TIME: "10:50"   # quoted (has a colon)
+      WINDOW_MIN: "90"           # widen tolerance to ±90 minutes
       REPO: Sevenon7/Tradier_Options       # for consumer reader
       MAX_AGE_HOURS: "24"
       RETRY_COUNT: "3"
@@ -34,35 +35,32 @@ jobs:
         run: |
           set -euo pipefail
       
-          # Manual runs always allowed.
+          # Manual runs always allowed
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "Manual dispatch -> running."
             exit 0
           fi
       
-          # === Config from env ===
-          TARGET_PT="${DESIRED_PT_TIME:-10:50}"   # desired local PT time (fallback if env missing)
-          WINDOW="${WINDOW_MIN:-3}"               # ± minutes window
+          TARGET_PT="${DESIRED_PT_TIME:-10:50}"   # HH:MM PT
+          WINDOW="${WINDOW_MIN:-90}"              # ± minutes
       
-          # Validate HH:MM format (best effort)
+          # Validate format
           if ! [[ "$TARGET_PT" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; then
-            echo "Bad DESIRED_PT_TIME='$TARGET_PT' (expect HH:MM). Using 10:50."
+            echo "Bad DESIRED_PT_TIME='$TARGET_PT'; defaulting to 10:50"
             TARGET_PT="10:50"
           fi
       
-          # === Convert PT clock to integer minutes ===
           NOW_H=$(TZ=America/Los_Angeles date +%H)
           NOW_M=$(TZ=America/Los_Angeles date +%M)
-          NOW_MIN=$((10#$NOW_H*60 + 10#$NOW_M))   # 10# avoids octal gotchas
+          NOW_MIN=$((10#$NOW_H*60 + 10#$NOW_M))
       
           T_H=${TARGET_PT%:*}
           T_M=${TARGET_PT#*:}
           T_MIN=$((10#$T_H*60 + 10#$T_M))
       
-          # absolute difference
           DIFF=$(( NOW_MIN - T_MIN ))
-          if [ $DIFF -lt 0 ]; then DIFF=$(( -DIFF )); fi
+          [ $DIFF -lt 0 ] && DIFF=$(( -DIFF ))
       
           echo "Now PT: ${NOW_H}:${NOW_M} | Target PT: ${TARGET_PT} | |Δ|min: ${DIFF}"
       
