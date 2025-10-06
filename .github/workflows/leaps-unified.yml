@@ -42,20 +42,17 @@ jobs:
         run: |
           set -euo pipefail
           export TZ=America/Los_Angeles
+      
           NOW_PT="$(date +%H:%M)"
           TARGET_PT="${DESIRED_PT_TIME}"
-
-          # compute |Δ| (minutes) between NOW_PT and TARGET_PT
-          export NOW_PT TARGET_PT
-          DELTA="$(
-            python - <<'PY'
-            import os, datetime
-            n = datetime.datetime.strptime(os.environ["NOW_PT"], "%H:%M")
-            t = datetime.datetime.strptime(os.environ["TARGET_PT"], "%H:%M")
-            print(abs(int((n - t).total_seconds() / 60)))
-PY
-          )"
-
+      
+          # Compute |Δ| minutes between NOW_PT and TARGET_PT using GNU date
+          now_s="$(date -d "$NOW_PT" +%s)"
+          tgt_s="$(date -d "$TARGET_PT" +%s)"
+          diff="$(( now_s - tgt_s ))"
+          [ "$diff" -lt 0 ] && diff="$(( -diff ))"
+          DELTA="$(( diff / 60 ))"
+      
           echo "Now PT: ${NOW_PT} | Target PT: ${TARGET_PT} | |Δ|min: ${DELTA}"
           if [ "${DELTA}" -le "${WINDOW_MIN}" ]; then
             echo "run_ok=true"  >> "$GITHUB_OUTPUT"
