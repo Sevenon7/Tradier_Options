@@ -29,7 +29,7 @@ jobs:
     steps:
       - name: Echo trigger info
         run: echo "event=${{ github.event_name }} cron=${{ github.event_name == 'schedule' && github.event.schedule || 'n/a' }}"
-  
+
       - name: Set up job
         run: echo "Starting unified producer+consumer…"
 
@@ -45,20 +45,15 @@ jobs:
         run: |
           set -euo pipefail
           export TZ=America/Los_Angeles
+
           NOW_PT="$(date +%H:%M)"
-          TARGET_PT="${DESIRED_PT_TIME}"
-      
-          DELTA="$(
-            NOW_PT="${NOW_PT}" TARGET_PT="${TARGET_PT}" python - <<'PY'
-      import os, datetime
-      now = os.environ["NOW_PT"]
-      tgt = os.environ["TARGET_PT"]
-      n = datetime.datetime.strptime(now, "%H:%M")
-      t = datetime.datetime.strptime(tgt, "%H:%M")
-      print(abs(int((n - t).total_seconds() / 60)))
-      PY
-          )"
-      
+          TARGET_PT="${DESIRED_PT_TIME}"   # e.g., 10:50
+
+          # Compute |Δ| minutes between NOW_PT and TARGET_PT (no heredoc → no YAML pitfalls)
+          DELTA="$(python -c "from datetime import datetime as d; \
+now=d.strptime('${NOW_PT}','%H:%M'); tgt=d.strptime('${TARGET_PT}','%H:%M'); \
+print(abs(int((now-tgt).total_seconds()/60)))")"
+
           echo "Now PT: ${NOW_PT} | Target PT: ${TARGET_PT} | |Δ|min: ${DELTA}"
           if [ "${DELTA}" -le "${WINDOW_MIN}" ]; then
             echo "run_ok=true"  >> "$GITHUB_OUTPUT"
@@ -164,8 +159,7 @@ REQ
       # ===== CONSUMER (always runs if within gate) =====
       - name: Make fetch tool executable
         if: steps.tgate.outputs.run_ok == 'true'
-        run: |
-          chmod +x .github/tools/fetch.sh
+        run: chmod +x .github/tools/fetch.sh
 
       - name: Resolve effective date_dir (prefer latest.json; ≤24h else fallback -1d)
         if: steps.tgate.outputs.run_ok == 'true'
@@ -178,13 +172,11 @@ REQ
         run: |
           set -euo pipefail
           mkdir -p tmp
-          # Try latest.json via API/raw/pages with our fetcher
           .github/tools/fetch.sh latest.json tmp/latest.json || true
           if [ -s tmp/latest.json ]; then
             DATE_DIR="$(jq -r '.date_dir // empty' tmp/latest.json)"
           fi
           if [ -z "${DATE_DIR:-}" ]; then
-            # List data/ via API and choose newest YYYY-MM-DD
             curl -fsSL -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
               "https://api.github.com/repos/${REPO}/contents/data?ref=${BRANCH}" > tmp/list.json
@@ -197,17 +189,12 @@ REQ
             exit 1
           fi
 
-          # Ensure ≤24h; else fallback to yesterday
           python - <<'PY'
 import os,datetime,sys
 d = os.environ["DATE_DIR"]
 dt = datetime.datetime.strptime(d,"%Y-%m-%d")
 age_h = (datetime.datetime.utcnow()-dt).total_seconds()/3600.0
-if age_h>24:
-    y=(datetime.datetime.utcnow()-datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    print(y)
-else:
-    print(d)
+print(d if age_h<=24 else (datetime.datetime.utcnow()-datetime.timedelta(days=1)).strftime("%Y-%m-%d"))
 PY
           > tmp/dd.txt
           echo "date_dir=$(cat tmp/dd.txt)" >> "$GITHUB_OUTPUT"
@@ -244,7 +231,3 @@ PY
             echo "**gapdown_above_100sma.csv (head):**"
             head -5 gap.csv || true
           } >> "$GITHUB_STEP_SUMMARY"
-
-      # If a second cron fires outside the window, the early gate prevents work.
-      # If a second cron *does* land inside the window, the skipcheck earlier
-      # will have created today's folder and the Producer steps won't run.
