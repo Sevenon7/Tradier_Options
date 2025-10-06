@@ -27,8 +27,8 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Echo cron that triggered
-        run: echo "Triggered by schedule: ${{ github.event.schedule }}"
+      - name: Echo trigger info
+        run: echo "event=${{ github.event_name }} cron=${{ github.event_name == 'schedule' && github.event.schedule || 'n/a' }}"
   
       - name: Set up job
         run: echo "Starting unified producer+consumer…"
