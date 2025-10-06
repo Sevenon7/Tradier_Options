@@ -1,22 +1,22 @@
 name: LEAPS Unified (produce + consume)
 
 on:
-  # 10:50 AM local PT, DST-aware (Mon–Fri)
   schedule:
-    # PDT months (Mar–Oct) → 17:50 UTC
+    # 10:50 AM local PT (DST-aware)
+    # PDT (Mar–Oct) 17:50 UTC on weekdays
     - cron: '50 17 * 3-10 1-5'
-    # PST months (Nov–Feb) → 18:50 UTC
+    # PST (Nov–Feb) 18:50 UTC on weekdays
     - cron: '50 18 * 11,12,1,2 1-5'
   workflow_dispatch:
 
 permissions:
-  contents: write    # commit output + publish gh-pages
+  contents: write
   pages: write
 
 env:
   PYTHON_VERSION: "3.11"
-  DESIRED_PT_TIME: "10:50"     # target local PT fire time
-  WINDOW_MIN: "35"             # ± minutes allowed around target (keeps single daily run)
+  DESIRED_PT_TIME: "10:50"   # local PT
+  WINDOW_MIN: "35"           # ± minutes guard window
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
   OWNER: "Sevenon7"
@@ -27,9 +27,6 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Echo trigger info
-        run: echo "event=${{ github.event_name }} cron=${{ github.event_name == 'schedule' && github.event.schedule || 'n/a' }}"
-
       - name: Set up job
         run: echo "Starting unified producer+consumer…"
 
@@ -45,14 +42,19 @@ jobs:
         run: |
           set -euo pipefail
           export TZ=America/Los_Angeles
-
           NOW_PT="$(date +%H:%M)"
-          TARGET_PT="${DESIRED_PT_TIME}"   # e.g., 10:50
+          TARGET_PT="${DESIRED_PT_TIME}"
 
-          # Compute |Δ| minutes between NOW_PT and TARGET_PT (no heredoc → no YAML pitfalls)
-          DELTA="$(python -c "from datetime import datetime as d; \
-now=d.strptime('${NOW_PT}','%H:%M'); tgt=d.strptime('${TARGET_PT}','%H:%M'); \
-print(abs(int((now-tgt).total_seconds()/60)))")"
+          # compute |Δ| (minutes) between NOW_PT and TARGET_PT
+          export NOW_PT TARGET_PT
+          DELTA="$(
+            python - <<'PY'
+            import os, datetime
+            n = datetime.datetime.strptime(os.environ["NOW_PT"], "%H:%M")
+            t = datetime.datetime.strptime(os.environ["TARGET_PT"], "%H:%M")
+            print(abs(int((n - t).total_seconds() / 60)))
+PY
+          )"
 
           echo "Now PT: ${NOW_PT} | Target PT: ${TARGET_PT} | |Δ|min: ${DELTA}"
           if [ "${DELTA}" -le "${WINDOW_MIN}" ]; then
@@ -67,10 +69,10 @@ print(abs(int((now-tgt).total_seconds()/60)))")"
         run: |
           if [ ! -f requirements.txt ]; then
             cat > requirements.txt <<'REQ'
-requests
-pandas
-numpy
-python-dateutil
+            requests
+            pandas
+            numpy
+            python-dateutil
 REQ
           fi
 
@@ -89,7 +91,7 @@ REQ
         if: steps.tgate.outputs.run_ok == 'true'
         run: echo "::add-mask::${{ secrets.TRADIER_TOKEN }}"
 
-      # ---- SKIP if already ran today (UTC) ----
+      # ---- Skip Producer if today's folder already exists (UTC) ----
       - name: Skip if already ran today (UTC)
         id: skipcheck
         if: steps.tgate.outputs.run_ok == 'true'
@@ -98,14 +100,13 @@ REQ
           set -euo pipefail
           DATE_DIR="data/$(date -u +%Y-%m-%d)"
           if [ -d "$DATE_DIR" ]; then
-            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "already=true"  >> "$GITHUB_OUTPUT"
             echo "Run already completed for $DATE_DIR — skipping Producer steps."
-            exit 0
           else
             echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ===== PRODUCER (ONLY when not already produced) =====
+      # ===== PRODUCER =====
       - name: Run overlay script (your original)
         if: steps.tgate.outputs.run_ok == 'true' && steps.skipcheck.outputs.already == 'false'
         shell: bash
@@ -156,7 +157,7 @@ REQ
           destination_dir: data/${{ steps.setdate.outputs.date_dir }}
           keep_files: true
 
-      # ===== CONSUMER (always runs if within gate) =====
+      # ===== CONSUMER =====
       - name: Make fetch tool executable
         if: steps.tgate.outputs.run_ok == 'true'
         run: chmod +x .github/tools/fetch.sh
@@ -188,15 +189,17 @@ REQ
             echo "::error ::Could not resolve a data/YYYY-MM-DD folder"
             exit 1
           fi
-
-          python - <<'PY'
-import os,datetime,sys
-d = os.environ["DATE_DIR"]
-dt = datetime.datetime.strptime(d,"%Y-%m-%d")
-age_h = (datetime.datetime.utcnow()-dt).total_seconds()/3600.0
-print(d if age_h<=24 else (datetime.datetime.utcnow()-datetime.timedelta(days=1)).strftime("%Y-%m-%d"))
+          python - <<'PY' > tmp/dd.txt
+          import os, datetime
+          d = os.environ["DATE_DIR"]
+          dt = datetime.datetime.strptime(d, "%Y-%m-%d")
+          age_h = (datetime.datetime.utcnow() - dt).total_seconds() / 3600.0
+          if age_h > 24:
+              y = (datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+              print(y)
+          else:
+              print(d)
 PY
-          > tmp/dd.txt
           echo "date_dir=$(cat tmp/dd.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Fetch overlay/PL/gap with fallback chain (raw → API → Pages)
@@ -222,12 +225,7 @@ PY
             echo ""
             echo "**date_dir:** ${{ steps.datedir.outputs.date_dir }}"
             echo ""
-            echo "**overlay.csv (head):**"
-            head -5 overlay.csv || true
-            echo ""
-            echo "**option_pl.csv (head):**"
-            head -5 option_pl.csv || true
-            echo ""
-            echo "**gapdown_above_100sma.csv (head):**"
-            head -5 gap.csv || true
+            echo "**overlay.csv (head):**"; head -5 overlay.csv || true
+            echo ""; echo "**option_pl.csv (head):**"; head -5 option_pl.csv || true
+            echo ""; echo "**gapdown_above_100sma.csv (head):**"; head -5 gap.csv || true
           } >> "$GITHUB_STEP_SUMMARY"
