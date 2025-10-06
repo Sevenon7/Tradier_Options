@@ -70,7 +70,7 @@ jobs:
             pandas
             numpy
             python-dateutil
-REQ
+            REQ
           fi
 
       - name: Setup Python
@@ -196,7 +196,7 @@ REQ
               print(y)
           else:
               print(d)
-PY
+          PY
           echo "date_dir=$(cat tmp/dd.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Fetch overlay/PL/gap with fallback chain (raw → API → Pages)
