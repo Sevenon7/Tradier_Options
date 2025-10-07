@@ -63,15 +63,19 @@ jobs:
 
       - name: Ensure requirements.txt
         if: steps.tgate.outputs.run_ok == 'true'
+        shell: bash
         run: |
-          if [ ! -f requirements.txt ]; then
-            cat > requirements.txt <<'REQ'
-            requests
-            pandas
-            numpy
-            python-dateutil
-            REQ
-          fi
+          set -euo pipefail
+          # Always (re)write the file so caching is deterministic
+          printf '%s\n' \
+            'requests' \
+            'pandas' \
+            'numpy' \
+            'python-dateutil' > requirements.txt
+
+          echo "----- requirements.txt -----"
+          cat requirements.txt
+          ls -l requirements.txt
 
       - name: Setup Python
         if: steps.tgate.outputs.run_ok == 'true'
