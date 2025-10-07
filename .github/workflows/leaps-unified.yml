@@ -61,6 +61,25 @@ jobs:
             echo "Not within ±${WINDOW_MIN} minutes — fast exit."
           fi
 
+      - name: Setup Python
+        if: steps.tgate.outputs.run_ok == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Show Python version (debug)
+        if: steps.tgate.outputs.run_ok == 'true'
+        run: python -V
+
+      - name: Ensure OS tools for fetch
+        if: steps.tgate.outputs.run_ok == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y curl jq coreutils        
+
       - name: Ensure requirements.txt
         if: steps.tgate.outputs.run_ok == 'true'
         shell: bash
