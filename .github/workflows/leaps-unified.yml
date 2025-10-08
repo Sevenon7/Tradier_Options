@@ -3,9 +3,9 @@ name: LEAPS Unified (produce + consume)
 on:
   schedule:
     # 10:50 AM local PT (DST-aware)
-    # PDT (Mar–Oct) 17:50 UTC on weekdays
+    # PDT (Mar–Oct) 17:50 UTC, Mon–Fri
     - cron: '50 17 * 3-10 1-5'
-    # PST (Nov–Feb) 18:50 UTC on weekdays
+    # PST (Nov–Feb) 18:50 UTC, Mon–Fri
     - cron: '50 18 * 11,12,1,2 1-5'
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.11"
   DESIRED_PT_TIME: "10:50"   # local PT
-  WINDOW_MIN: "225"           # ± minutes guard window
+  WINDOW_MIN: "600"           # ± minutes guard window
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
   OWNER: "Sevenon7"
@@ -27,9 +27,6 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Echo trigger
-        run: echo "event=${{ github.event_name }}"
-
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
@@ -46,11 +43,9 @@ jobs:
           NOW_PT="$(date +%H:%M)"
           TARGET_PT="${DESIRED_PT_TIME}"
 
-          # |Δ|min using GNU date
           now_s="$(date -d "$NOW_PT" +%s)"
           tgt_s="$(date -d "$TARGET_PT" +%s)"
-          diff="$(( now_s - tgt_s ))"
-          [ "$diff" -lt 0 ] && diff="$(( -diff ))"
+          diff="$(( now_s - tgt_s ))"; [ "$diff" -lt 0 ] && diff="$(( -diff ))"
           DELTA="$(( diff / 60 ))"
 
           echo "Now PT: ${NOW_PT} | Target PT: ${TARGET_PT} | |Δ|min: ${DELTA}"
@@ -61,7 +56,7 @@ jobs:
             echo "Not within ±${WINDOW_MIN} minutes — fast exit."
           fi
 
-      # Tools needed for fetch + JSON processing
+      # ----- OS tools -----
       - name: Ensure OS tools (curl, jq)
         if: steps.tgate.outputs.run_ok == 'true'
         shell: bash
@@ -70,7 +65,7 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y curl jq coreutils
 
-      # Create requirements BEFORE setup-python so pip caching can see it
+      # ----- requirements BEFORE setup-python (and with fallback) -----
       - name: Ensure requirements.txt
         if: steps.tgate.outputs.run_ok == 'true'
         shell: bash
@@ -162,19 +157,28 @@ jobs:
           branch: ${{ env.BRANCH }}
           add_options: '-A'
 
-      # ---- Publish a static mirror of the day folder to GitHub Pages ----
-      - name: Resolve today date_dir (UTC)
+      # ---- Only publish mirror if today's folder actually exists ----
+      - name: Check today dir exists
         if: steps.tgate.outputs.run_ok == 'true'
-        id: setdate
-        run: echo "date_dir=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        id: todaydir
+        shell: bash
+        run: |
+          set -euo pipefail
+          D="data/$(date -u +%Y-%m-%d)"
+          if [ -d "$D" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "path=$D"     >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish CSV mirror to gh-pages
-        if: steps.tgate.outputs.run_ok == 'true'
+        if: steps.tgate.outputs.run_ok == 'true' && steps.todaydir.outputs.exists == 'true'
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: data/${{ steps.setdate.outputs.date_dir }}
-          destination_dir: data/${{ steps.setdate.outputs.date_dir }}
+          publish_dir: ${{ steps.todaydir.outputs.path }}
+          destination_dir: ${{ steps.todaydir.outputs.path }}
           keep_files: true
 
       # ===== CONSUMER =====
@@ -182,7 +186,7 @@ jobs:
         if: steps.tgate.outputs.run_ok == 'true'
         run: chmod +x ./tools/fetch.sh
 
-      - name: Resolve effective date_dir (prefer latest.json; ≤24h else fallback -1d)
+      - name: Resolve effective date_dir (prefer ≤24h pointer; else newest existing ≤ today)
         if: steps.tgate.outputs.run_ok == 'true'
         id: datedir
         shell: bash
@@ -193,48 +197,54 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p tmp
+          TODAY="$(date -u +%Y-%m-%d)"
 
-          # Try latest.json first (raw → API → Pages inside fetch.sh)
+          # Try pointer
           ./tools/fetch.sh latest.json tmp/latest.json || true
 
-          DATE_DIR_RAW=""
-          if [ -s tmp/latest.json ]; then
-            DATE_DIR_RAW="$(jq -r '.date_dir // empty' tmp/latest.json)"
-          fi
+          # Always list /data so we know what exists
+          curl -fsSL -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "https://api.github.com/repos/${REPO}/contents/data?ref=${BRANCH}" > tmp/list.json
 
-          # Fallback: list /data and pick newest YYYY-MM-DD
-          if [ -z "${DATE_DIR_RAW:-}" ]; then
-            curl -fsSL -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              "https://api.github.com/repos/${REPO}/contents/data?ref=${BRANCH}" > tmp/list.json
-            DATE_DIR_RAW="$(jq -r '[ .[] | select(.type=="dir") | .name ]
-                                | map(select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))
-                                | sort | last // empty' tmp/list.json)"
-          fi
-
-          if [ -z "${DATE_DIR_RAW:-}" ]; then
-            echo "::error ::Could not resolve a data/YYYY-MM-DD folder"
-            exit 1
-          fi
-
-          # Normalize: keep ONLY the last path component (strip any 'data/' prefix)
-          DATE_DIR="${DATE_DIR_RAW##*/}"
-          echo "Resolved DATE_DIR_RAW=${DATE_DIR_RAW} -> DATE_DIR=${DATE_DIR}"
-          export DATE_DIR
-
-          # Validate age and possibly fallback to yesterday
           python - <<'PY' > tmp/dd.txt
-          import os, datetime, re, sys
-          d = os.environ["DATE_DIR"]
-          if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
-              print("Bad date_dir format: " + d, file=sys.stderr)
+          import os, json, re, datetime, sys
+          today = os.environ.get("TODAY")
+          with open("tmp/list.json","r",encoding="utf-8") as f:
+              arr = json.load(f)
+          
+          # All existing YYYY-MM-DD dirs
+          dates = sorted(
+              [x["name"] for x in arr if x.get("type")=="dir" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x.get("name",""))]
+          )
+          if not dates:
+              print("ERROR: no date folders in /data", file=sys.stderr)
               sys.exit(1)
-          dt = datetime.datetime.strptime(d, "%Y-%m-%d")
-          age_h = (datetime.datetime.utcnow() - dt).total_seconds() / 3600.0
-          print((datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d") if age_h > 24 else d)
+          
+          today_dt = datetime.datetime.strptime(today, "%Y-%m-%d")
+          # Newest existing date ≤ today
+          valid = [d for d in dates if datetime.datetime.strptime(d, "%Y-%m-%d") <= today_dt]
+          cand  = valid[-1] if valid else dates[-1]
+          
+          # If latest.json exists and is fresh (≤24h) and present in repo, prefer it
+          ptr = None
+          try:
+              with open("tmp/latest.json","r",encoding="utf-8") as f:
+                  j = json.load(f)
+              ptr = (j.get("date_dir") or "").split("/")[-1]
+              if re.fullmatch(r"\d{4}-\d{2}-\d{2}", ptr) and ptr in dates:
+                  ptr_dt = datetime.datetime.strptime(ptr, "%Y-%m-%d")
+                  age_h  = (today_dt - ptr_dt).total_seconds()/3600.0
+                  if 0 <= age_h <= 24:
+                      cand = ptr
+          except Exception:
+              pass
+          
+          print(cand)
           PY
-
-          echo "date_dir=$(cat tmp/dd.txt)" >> "$GITHUB_OUTPUT"
+          RES="$(cat tmp/dd.txt)"
+          echo "Resolved DATE_DIR=${RES}"
+          echo "date_dir=${RES}" >> "$GITHUB_OUTPUT"
 
       - name: Fetch overlay/PL/gap with fallback chain (raw → API → Pages)
         if: steps.tgate.outputs.run_ok == 'true'
@@ -243,6 +253,7 @@ jobs:
           REPO: ${{ env.REPO }}
           BRANCH: ${{ env.BRANCH }}
           OWNER: ${{ env.OWNER }}
+        shell: bash
         run: |
           set -euo pipefail
           DD="${{ steps.datedir.outputs.date_dir }}"
