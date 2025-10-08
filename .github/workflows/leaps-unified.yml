@@ -42,17 +42,17 @@ jobs:
         run: |
           set -euo pipefail
           export TZ=America/Los_Angeles
-      
+
           NOW_PT="$(date +%H:%M)"
           TARGET_PT="${DESIRED_PT_TIME}"
-      
+
           # Compute |Δ| minutes between NOW_PT and TARGET_PT using GNU date
           now_s="$(date -d "$NOW_PT" +%s)"
           tgt_s="$(date -d "$TARGET_PT" +%s)"
           diff="$(( now_s - tgt_s ))"
           [ "$diff" -lt 0 ] && diff="$(( -diff ))"
           DELTA="$(( diff / 60 ))"
-      
+
           echo "Now PT: ${NOW_PT} | Target PT: ${TARGET_PT} | |Δ|min: ${DELTA}"
           if [ "${DELTA}" -le "${WINDOW_MIN}" ]; then
             echo "run_ok=true"  >> "$GITHUB_OUTPUT"
@@ -61,12 +61,28 @@ jobs:
             echo "Not within ±${WINDOW_MIN} minutes — fast exit."
           fi
 
+      # --- CREATE requirements.txt BEFORE setup-python (for pip cache) ---
+      - name: Ensure requirements.txt
+        if: steps.tgate.outputs.run_ok == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            'requests' \
+            'pandas' \
+            'numpy' \
+            'python-dateutil' > requirements.txt
+          echo "----- requirements.txt -----"
+          cat requirements.txt
+          ls -l requirements.txt
+
       - name: Setup Python
         if: steps.tgate.outputs.run_ok == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Show Python version (debug)
         if: steps.tgate.outputs.run_ok == 'true'
@@ -78,27 +94,20 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -y
-          sudo apt-get install -y curl jq coreutils        
+          sudo apt-get install -y curl jq coreutils
 
-      - name: Ensure requirements.txt
+      - name: Install deps (with fallback)
         if: steps.tgate.outputs.run_ok == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          # Always (re)write the file so caching is deterministic
-          printf '%s\n' \
-            'requests' \
-            'pandas' \
-            'numpy' \
-            'python-dateutil' > requirements.txt
-
-          echo "----- requirements.txt -----"
-          cat requirements.txt
-          ls -l requirements.txt
-
-      - name: Install deps
-        if: steps.tgate.outputs.run_ok == 'true'
-        run: pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          if pip install -r requirements.txt; then
+            echo "pip install from requirements.txt succeeded."
+          else
+            echo "::warning::pip install from requirements.txt failed; falling back to pinned list."
+            pip install requests pandas numpy python-dateutil
+          fi
 
       - name: Mask token (log hygiene)
         if: steps.tgate.outputs.run_ok == 'true'
