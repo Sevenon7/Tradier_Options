@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      # Ensure local modules like "tools.*" can be imported
+      # allow "from tools..." imports
       PYTHONPATH: ${{ github.workspace }}
 
     steps:
@@ -42,16 +42,12 @@ jobs:
         run: |
           set -euo pipefail
           export TZ=America/Los_Angeles
-
           NOW_PT="$(date +%H:%M)"
           TARGET_PT="${DESIRED_PT_TIME}"
-
-          # |Δ|min using GNU date
           now_s="$(date -d "$NOW_PT" +%s)"
           tgt_s="$(date -d "$TARGET_PT" +%s)"
           diff="$(( now_s - tgt_s ))"; [ "$diff" -lt 0 ] && diff="$(( -diff ))"
           DELTA="$(( diff / 60 ))"
-
           echo "Now PT: ${NOW_PT} | Target PT: ${TARGET_PT} | |Δ|min: ${DELTA}"
           if [ "${DELTA}" -le "${WINDOW_MIN}" ]; then
             echo "run_ok=true"  >> "$GITHUB_OUTPUT"
@@ -60,7 +56,6 @@ jobs:
             echo "Not within ±${WINDOW_MIN} minutes — fast exit."
           fi
 
-      # ----- OS tools -----
       - name: Ensure OS tools (curl, jq)
         if: steps.tgate.outputs.run_ok == 'true'
         shell: bash
@@ -69,17 +64,12 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y curl jq coreutils
 
-      # ----- requirements BEFORE setup-python (and with fallback) -----
       - name: Ensure requirements.txt
         if: steps.tgate.outputs.run_ok == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' \
-            'requests' \
-            'pandas' \
-            'numpy' \
-            'python-dateutil' > requirements.txt
+          printf '%s\n' requests pandas numpy python-dateutil > requirements.txt
           echo "----- requirements.txt -----"
           cat requirements.txt
 
@@ -102,7 +92,7 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           if ! pip install -r requirements.txt; then
-            echo "Primary install failed — attempting best-effort fallback."
+            echo "Primary install failed — best-effort fallback."
             pip install requests pandas numpy python-dateutil || true
           fi
 
@@ -153,13 +143,32 @@ jobs:
             python tools/enrich_overlay_with_vwap.py --overlay overlay_vwap_macd_rsi.csv || true
           fi
 
+      # === NEW: normalize outputs into data/YYYY-MM-DD and refresh latest.json ===
+      - name: Collect artifacts into date dir + update latest.json
+        if: steps.tgate.outputs.run_ok == 'true' && steps.skipcheck.outputs.already == 'false'
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          TODAY="$(date -u +%Y-%m-%d)"
+          DD="data/${TODAY}"
+          mkdir -p "$DD"
+          # Move any root-level outputs into the date folder
+          for f in overlay_vwap_macd_rsi.csv option_pl.csv gapdown_above_100sma.csv vwap_missing.json; do
+            [ -f "$f" ] && mv -f "$f" "$DD/"
+          done
+          # Refresh latest.json pointer at repo root
+          jq -n --arg dd "$TODAY" '{date_dir: ("data/" + $dd)}' > latest.json
+          echo "date_dir=${TODAY}" >> "$GITHUB_OUTPUT"
+          echo "Staged contents:"; ls -l "$DD" || true
+
       - name: Commit daily artifacts to repo
         if: steps.tgate.outputs.run_ok == 'true' && steps.skipcheck.outputs.already == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "LEAPS daily overlay (producer)"
           branch: ${{ env.BRANCH }}
-          add_options: '-A'
+          add_options: -A
 
       # ---- Only publish mirror if today's folder actually exists ----
       - name: Check today dir exists
@@ -201,42 +210,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p tmp
-
-          # Export TODAY for Python (fixes earlier None issue)
           export TODAY="$(date -u +%Y-%m-%d)"
-
-          # Try pointer
           ./tools/fetch.sh latest.json tmp/latest.json || true
-
-          # Always list /data so we know what exists
           curl -fsSL -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             "https://api.github.com/repos/${REPO}/contents/data?ref=${BRANCH}" > tmp/list.json
-
           python - <<'PY' > tmp/dd.txt
           import os, json, re, datetime, sys
           today = os.environ.get("TODAY")
           if not today:
               print("ERROR: TODAY not exported", file=sys.stderr); sys.exit(1)
-          
           with open("tmp/list.json","r",encoding="utf-8") as f:
               arr = json.load(f)
-          
-          # All existing YYYY-MM-DD dirs
-          dates = sorted(
-              [x["name"] for x in arr if x.get("type")=="dir" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x.get("name",""))]
-          )
-          if not dates:
-              print("ERROR: no date folders in /data", file=sys.stderr)
-              sys.exit(1)
-          
+          dates = sorted([x["name"] for x in arr if x.get("type")=="dir" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x.get("name",""))])
+          if not dates: print("ERROR: no date folders in /data", file=sys.stderr); sys.exit(1)
           today_dt = datetime.datetime.strptime(today, "%Y-%m-%d")
-          # Newest existing date ≤ today (avoid selecting future folders)
           valid = [d for d in dates if datetime.datetime.strptime(d, "%Y-%m-%d") <= today_dt]
           cand  = (valid[-1] if valid else dates[-1])
-          
-          # If latest.json exists and is fresh (≤24h) and present in repo, prefer it
           try:
+              import json
               with open("tmp/latest.json","r",encoding="utf-8") as f:
                   j = json.load(f)
               ptr = (j.get("date_dir") or "").split("/")[-1]
@@ -247,7 +239,6 @@ jobs:
                       cand = ptr
           except Exception:
               pass
-          
           print(cand)
           PY
           RES="$(cat tmp/dd.txt)"
