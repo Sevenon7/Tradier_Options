@@ -182,7 +182,7 @@ jobs:
       # ===== CONSUMER =====
       - name: Make fetch tool executable
         if: steps.tgate.outputs.run_ok == 'true'
-        run: chmod +x .github/tools/fetch.sh
+        run: chmod +x tools/fetch.sh
 
       - name: Resolve effective date_dir (prefer latest.json; ≤24h else fallback -1d)
         if: steps.tgate.outputs.run_ok == 'true'
