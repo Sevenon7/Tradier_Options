@@ -16,7 +16,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.11"
   DESIRED_PT_TIME: "10:50"   # local PT
-  WINDOW_MIN: "95"           # ± minutes guard window
+  WINDOW_MIN: "125"           # ± minutes guard window
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
   OWNER: "Sevenon7"
@@ -194,34 +194,41 @@ jobs:
           set -euo pipefail
           mkdir -p tmp
 
-          # Try latest.json first (raw → API → pages inside fetch.sh)
+          # Try latest.json first (raw → API → Pages inside fetch.sh)
           ./tools/fetch.sh latest.json tmp/latest.json || true
-          DATE_DIR=""
+
+          DATE_DIR_RAW=""
           if [ -s tmp/latest.json ]; then
-            DATE_DIR="$(jq -r '.date_dir // empty' tmp/latest.json)"
+            DATE_DIR_RAW="$(jq -r '.date_dir // empty' tmp/latest.json)"
           fi
 
           # Fallback: list /data and pick newest YYYY-MM-DD
-          if [ -z "${DATE_DIR:-}" ]; then
+          if [ -z "${DATE_DIR_RAW:-}" ]; then
             curl -fsSL -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
               "https://api.github.com/repos/${REPO}/contents/data?ref=${BRANCH}" > tmp/list.json
-            DATE_DIR="$(jq -r '[ .[] | select(.type=="dir") | .name ]
+            DATE_DIR_RAW="$(jq -r '[ .[] | select(.type=="dir") | .name ]
                                 | map(select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))
                                 | sort | last // empty' tmp/list.json)"
           fi
 
-          if [ -z "${DATE_DIR:-}" ]; then
+          if [ -z "${DATE_DIR_RAW:-}" ]; then
             echo "::error ::Could not resolve a data/YYYY-MM-DD folder"
             exit 1
           fi
 
-          echo "Resolved DATE_DIR=${DATE_DIR}"
-          export DATE_DIR  # <-- make visible to Python below
+          # Normalize: keep ONLY the last path component (strip any 'data/' prefix)
+          DATE_DIR="${DATE_DIR_RAW##*/}"
+          echo "Resolved DATE_DIR_RAW=${DATE_DIR_RAW} -> DATE_DIR=${DATE_DIR}"
+          export DATE_DIR
 
+          # Validate age and possibly fallback to yesterday
           python - <<'PY' > tmp/dd.txt
-          import os, datetime
+          import os, datetime, re, sys
           d = os.environ["DATE_DIR"]
+          if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+              print("Bad date_dir format: " + d, file=sys.stderr)
+              sys.exit(1)
           dt = datetime.datetime.strptime(d, "%Y-%m-%d")
           age_h = (datetime.datetime.utcnow() - dt).total_seconds() / 3600.0
           print((datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d") if age_h > 24 else d)
