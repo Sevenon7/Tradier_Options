@@ -220,12 +220,12 @@ jobs:
           export DATE_DIR  # <-- make visible to Python below
 
           python - <<'PY' > tmp/dd.txt
-import os, datetime
-d = os.environ["DATE_DIR"]
-dt = datetime.datetime.strptime(d, "%Y-%m-%d")
-age_h = (datetime.datetime.utcnow() - dt).total_seconds() / 3600.0
-print((datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d") if age_h > 24 else d)
-PY
+          import os, datetime
+          d = os.environ["DATE_DIR"]
+          dt = datetime.datetime.strptime(d, "%Y-%m-%d")
+          age_h = (datetime.datetime.utcnow() - dt).total_seconds() / 3600.0
+          print((datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d") if age_h > 24 else d)
+          PY
 
           echo "date_dir=$(cat tmp/dd.txt)" >> "$GITHUB_OUTPUT"
 
