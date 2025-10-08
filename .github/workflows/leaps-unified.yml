@@ -2,10 +2,10 @@ name: LEAPS Unified (produce + consume)
 
 on:
   schedule:
-    # 10:50 AM local PT (DST-aware)
-    # PDT (Mar–Oct) 17:50 UTC, Mon–Fri
+    # 10:50 AM local PT (DST-aware, weekdays only)
+    # PDT (Mar–Oct) 17:50 UTC
     - cron: '50 17 * 3-10 1-5'
-    # PST (Nov–Feb) 18:50 UTC, Mon–Fri
+    # PST (Nov–Feb) 18:50 UTC
     - cron: '50 18 * 11,12,1,2 1-5'
   workflow_dispatch:
 
@@ -25,6 +25,9 @@ jobs:
   run-all:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Ensure local modules like "tools.*" can be imported
+      PYTHONPATH: ${{ github.workspace }}
 
     steps:
       - name: Checkout repo
@@ -43,6 +46,7 @@ jobs:
           NOW_PT="$(date +%H:%M)"
           TARGET_PT="${DESIRED_PT_TIME}"
 
+          # |Δ|min using GNU date
           now_s="$(date -d "$NOW_PT" +%s)"
           tgt_s="$(date -d "$TARGET_PT" +%s)"
           diff="$(( now_s - tgt_s ))"; [ "$diff" -lt 0 ] && diff="$(( -diff ))"
@@ -197,7 +201,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p tmp
-          TODAY="$(date -u +%Y-%m-%d)"
+
+          # Export TODAY for Python (fixes earlier None issue)
+          export TODAY="$(date -u +%Y-%m-%d)"
 
           # Try pointer
           ./tools/fetch.sh latest.json tmp/latest.json || true
@@ -210,6 +216,9 @@ jobs:
           python - <<'PY' > tmp/dd.txt
           import os, json, re, datetime, sys
           today = os.environ.get("TODAY")
+          if not today:
+              print("ERROR: TODAY not exported", file=sys.stderr); sys.exit(1)
+          
           with open("tmp/list.json","r",encoding="utf-8") as f:
               arr = json.load(f)
           
@@ -222,12 +231,11 @@ jobs:
               sys.exit(1)
           
           today_dt = datetime.datetime.strptime(today, "%Y-%m-%d")
-          # Newest existing date ≤ today
+          # Newest existing date ≤ today (avoid selecting future folders)
           valid = [d for d in dates if datetime.datetime.strptime(d, "%Y-%m-%d") <= today_dt]
-          cand  = valid[-1] if valid else dates[-1]
+          cand  = (valid[-1] if valid else dates[-1])
           
           # If latest.json exists and is fresh (≤24h) and present in repo, prefer it
-          ptr = None
           try:
               with open("tmp/latest.json","r",encoding="utf-8") as f:
                   j = json.load(f)
