@@ -16,7 +16,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.11"
   DESIRED_PT_TIME: "10:50"   # local PT
-  WINDOW_MIN: "125"           # ± minutes guard window
+  WINDOW_MIN: "225"           # ± minutes guard window
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
   OWNER: "Sevenon7"
