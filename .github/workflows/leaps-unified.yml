@@ -2,8 +2,11 @@ name: LEAPS Unified (produce + consume)
 
 on:
   schedule:
-    - cron: '50 17 * 3-10 1-5'   # PDT (Mar–Oct) 10:50 AM PT
-    - cron: '50 18 * 11,12,1,2 1-5'  # PST (Nov–Feb) 10:50 AM PT
+    # 10:50 AM local PT (DST-aware)
+    # PDT (Mar–Oct) 17:50 UTC on weekdays
+    - cron: '50 17 * 3-10 1-5'
+    # PST (Nov–Feb) 18:50 UTC on weekdays
+    - cron: '50 18 * 11,12,1,2 1-5'
   workflow_dispatch:
 
 permissions:
@@ -12,8 +15,8 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  DESIRED_PT_TIME: "10:50"
-  WINDOW_MIN: "90"
+  DESIRED_PT_TIME: "10:50"   # local PT
+  WINDOW_MIN: "95"           # ± minutes guard window
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
   OWNER: "Sevenon7"
@@ -24,27 +27,32 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Set up job
-        run: echo "Starting unified producer+consumer…"
+      - name: Echo trigger
+        run: echo "event=${{ github.event_name }}"
 
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ---- TIME GATE (America/Los_Angeles) ----
       - name: Time Gate (America/Los_Angeles)
         id: tgate
         shell: bash
         run: |
           set -euo pipefail
           export TZ=America/Los_Angeles
+
           NOW_PT="$(date +%H:%M)"
           TARGET_PT="${DESIRED_PT_TIME}"
+
+          # |Δ|min using GNU date
           now_s="$(date -d "$NOW_PT" +%s)"
           tgt_s="$(date -d "$TARGET_PT" +%s)"
           diff="$(( now_s - tgt_s ))"
           [ "$diff" -lt 0 ] && diff="$(( -diff ))"
           DELTA="$(( diff / 60 ))"
+
           echo "Now PT: ${NOW_PT} | Target PT: ${TARGET_PT} | |Δ|min: ${DELTA}"
           if [ "${DELTA}" -le "${WINDOW_MIN}" ]; then
             echo "run_ok=true"  >> "$GITHUB_OUTPUT"
@@ -53,16 +61,28 @@ jobs:
             echo "Not within ±${WINDOW_MIN} minutes — fast exit."
           fi
 
-      # create reqs before setup-python (for cache)
+      # Tools needed for fetch + JSON processing
+      - name: Ensure OS tools (curl, jq)
+        if: steps.tgate.outputs.run_ok == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y curl jq coreutils
+
+      # Create requirements BEFORE setup-python so pip caching can see it
       - name: Ensure requirements.txt
         if: steps.tgate.outputs.run_ok == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' requests pandas numpy python-dateutil > requirements.txt
+          printf '%s\n' \
+            'requests' \
+            'pandas' \
+            'numpy' \
+            'python-dateutil' > requirements.txt
           echo "----- requirements.txt -----"
           cat requirements.txt
-          ls -l requirements.txt
 
       - name: Setup Python
         if: steps.tgate.outputs.run_ok == 'true'
@@ -72,17 +92,9 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Show Python version (debug)
+      - name: Show Python version
         if: steps.tgate.outputs.run_ok == 'true'
         run: python -V
-
-      - name: Ensure OS tools for fetch
-        if: steps.tgate.outputs.run_ok == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update -y
-          sudo apt-get install -y curl jq coreutils
 
       - name: Install deps (with fallback)
         if: steps.tgate.outputs.run_ok == 'true'
@@ -90,17 +102,16 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          if pip install -r requirements.txt; then
-            echo "pip install from requirements.txt succeeded."
-          else
-            echo "::warning::pip install failed; falling back."
-            pip install requests pandas numpy python-dateutil
+          if ! pip install -r requirements.txt; then
+            echo "Primary install failed — attempting best-effort fallback."
+            pip install requests pandas numpy python-dateutil || true
           fi
 
       - name: Mask token (log hygiene)
         if: steps.tgate.outputs.run_ok == 'true'
         run: echo "::add-mask::${{ secrets.TRADIER_TOKEN }}"
 
+      # ---- Skip Producer if today's folder already exists (UTC) ----
       - name: Skip if already ran today (UTC)
         id: skipcheck
         if: steps.tgate.outputs.run_ok == 'true'
@@ -133,7 +144,7 @@ jobs:
           if [ -f tools/option_pl_builder.py ]; then
             python tools/option_pl_builder.py
           else
-            echo "option_pl_builder.py not present; skipping."
+            echo "tools/option_pl_builder.py not present; skipping."
           fi
 
       - name: Enrich overlay with intraday VWAP (optional)
@@ -169,7 +180,7 @@ jobs:
       # ===== CONSUMER =====
       - name: Make fetch tool executable
         if: steps.tgate.outputs.run_ok == 'true'
-        run: chmod +x ./tools/fetch.sh   # <-- corrected path
+        run: chmod +x ./tools/fetch.sh
 
       - name: Resolve effective date_dir (prefer latest.json; ≤24h else fallback -1d)
         if: steps.tgate.outputs.run_ok == 'true'
@@ -182,10 +193,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p tmp
-          ./tools/fetch.sh latest.json tmp/latest.json || true   # <-- corrected path
+
+          # Try latest.json first (raw → API → pages inside fetch.sh)
+          ./tools/fetch.sh latest.json tmp/latest.json || true
+          DATE_DIR=""
           if [ -s tmp/latest.json ]; then
             DATE_DIR="$(jq -r '.date_dir // empty' tmp/latest.json)"
           fi
+
+          # Fallback: list /data and pick newest YYYY-MM-DD
           if [ -z "${DATE_DIR:-}" ]; then
             curl -fsSL -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -194,21 +210,23 @@ jobs:
                                 | map(select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")))
                                 | sort | last // empty' tmp/list.json)"
           fi
+
           if [ -z "${DATE_DIR:-}" ]; then
             echo "::error ::Could not resolve a data/YYYY-MM-DD folder"
             exit 1
           fi
+
+          echo "Resolved DATE_DIR=${DATE_DIR}"
+          export DATE_DIR  # <-- make visible to Python below
+
           python - <<'PY' > tmp/dd.txt
-          import os, datetime
-          d = os.environ["DATE_DIR"]
-          dt = datetime.datetime.strptime(d, "%Y-%m-%d")
-          age_h = (datetime.datetime.utcnow() - dt).total_seconds() / 3600.0
-          if age_h > 24:
-              y = (datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-              print(y)
-          else:
-              print(d)
-          PY
+import os, datetime
+d = os.environ["DATE_DIR"]
+dt = datetime.datetime.strptime(d, "%Y-%m-%d")
+age_h = (datetime.datetime.utcnow() - dt).total_seconds() / 3600.0
+print((datetime.datetime.utcnow() - datetime.timedelta(days=1)).strftime("%Y-%m-%d") if age_h > 24 else d)
+PY
+
           echo "date_dir=$(cat tmp/dd.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Fetch overlay/PL/gap with fallback chain (raw → API → Pages)
@@ -221,7 +239,7 @@ jobs:
         run: |
           set -euo pipefail
           DD="${{ steps.datedir.outputs.date_dir }}"
-          ./tools/fetch.sh \   # <-- corrected path
+          ./tools/fetch.sh \
             "data/${DD}/overlay_vwap_macd_rsi.csv" overlay.csv \
             "data/${DD}/option_pl.csv"            option_pl.csv \
             "data/${DD}/gapdown_above_100sma.csv" gap.csv
