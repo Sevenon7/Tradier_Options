@@ -63,6 +63,8 @@ jobs:
   # 2) PRODUCER
   # =========================
   producer:
+    env:
+        PYTHONPATH: ${{ github.workspace }}
     needs: time-gate
     if: needs.time-gate.outputs.run_ok == 'true'
     runs-on: ubuntu-latest
@@ -142,13 +144,18 @@ jobs:
 
       - name: Enrich overlay with intraday VWAP (optional)
         if: steps.skipcheck.outputs.already == 'false'
+        continue-on-error: true
         run: |
           if [ -f tools/enrich_overlay_with_vwap.py ]; then
-            if ! python tools/enrich_overlay_with_vwap.py --overlay overlay_vwap_macd_rsi.csv; then
+            # Run as a package so "from tools.*" works in any CWD
+            if python -m tools.enrich_overlay_with_vwap --overlay overlay_vwap_macd_rsi.csv; then
+              echo "✅ VWAP enrichment completed" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::VWAP enrichment failed (non-blocking)"
               echo "⚠️ VWAP enrichment failed (non-critical)" >> "$GITHUB_STEP_SUMMARY"
             fi
           else
-            echo "⚠️ tools/enrich_overlay_with_vwap.py not found; skipping." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::tools/enrich_overlay_with_vwap.py not found"
           fi
 
       - name: Collect artifacts into date dir + update latest.json
@@ -180,53 +187,69 @@ jobs:
 
       - name: Build analysis_digest.json (root + date_dir)
         if: steps.skipcheck.outputs.already == 'false'
-        shell: bash
         env:
-          REPO: ${{ env.REPO }}   # e.g., Sevenon7/Tradier_Options
+          DATE_ONLY: ${{ needs.initialize.outputs.date_dir }}   # e.g. 2025-10-08
+        shell: bash
         run: |
           set -euo pipefail
-          DD="data/${{ needs.initialize.outputs.date_dir }}"
+
+          BASE_DIR="data/${DATE_ONLY}"
+          OVERLAY="${BASE_DIR}/overlay_vwap_macd_rsi.csv"
+          OPTPL="${BASE_DIR}/option_pl.csv"
+          GAP="${BASE_DIR}/gapdown_above_100sma.csv"
+
+          if [ ! -f "${OVERLAY}" ]; then
+            echo "::error ::overlay CSV not found at ${OVERLAY}"
+            exit 1
+          fi
+
           python - <<'PY'
-          import os, csv, json, datetime
-
-          repo = os.environ["REPO"]                       # "Sevenon7/Tradier_Options"
-          dd   = os.path.join("data", os.environ.get("GITHUB_OUTPUT","") or "${{ needs.initialize.outputs.date_dir }}")
-          # we already exported DD in the shell:
-          dd   = os.environ.get("DD", dd)
-
-          def raw_url(path):
-              return f"https://raw.githubusercontent.com/{repo}/main/{path}"
-
-          overlay = f"{dd}/overlay_vwap_macd_rsi.csv"
-          opl     = f"{dd}/option_pl.csv"
-          gap     = f"{dd}/gapdown_above_100sma.csv"
-
-          out = "analysis_digest.json"
-          payload = {
-            "generated_utc": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
-            "raw_links": {
-              "overlay": raw_url(overlay),
-              "option_pl": raw_url(opl),
-              "gap_screen": raw_url(gap),
-              "ready": raw_url(f"{dd}/READY"),
-              "latest": raw_url("latest.json"),
-            }
+          import os, json, datetime, pandas as pd
+          
+          date_only = os.environ["DATE_ONLY"]
+          base = os.path.join("data", date_only)
+          
+          overlay = os.path.join(base, "overlay_vwap_macd_rsi.csv")
+          optpl   = os.path.join(base, "option_pl.csv")
+          gap     = os.path.join(base, "gapdown_above_100sma.csv")
+          
+          out = {
+              "generated_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "raw_links": {
+                  "overlay": f"https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/{overlay}",
+                  "option_pl": f"https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/{optpl}",
+                  "gap_screen": f"https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/{gap}",
+                  "ready": f"https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/{base}/READY",
+                  "latest": "https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/latest.json",
+              },
+              "overlay_rows": 0,
+              "option_pl_rows": 0,
+              "gap_rows": 0,
           }
-
-          def read_csv(p):
+          
+          try:
+              out["overlay_rows"] = int(pd.read_csv(overlay).shape[0])
+          except Exception as e:
+              out["overlay_error"] = str(e)
+          
+          if os.path.exists(optpl):
               try:
-                  with open(p, newline='', encoding='utf-8') as f:
-                      return list(csv.DictReader(f))
-              except FileNotFoundError:
-                  return []
-
-          payload["overlay"]     = read_csv(overlay)
-          payload["option_pl"]   = read_csv(opl)
-          payload["gap_screen"]  = read_csv(gap)
-
-          with open(out, "w", encoding="utf-8") as f:
-              json.dump(payload, f, indent=2)
-          print(f"Wrote {out}")
+                  out["option_pl_rows"] = int(pd.read_csv(optpl).shape[0])
+              except Exception as e:
+                  out["option_pl_error"] = str(e)
+          
+          if os.path.exists(gap):
+              try:
+                  out["gap_rows"] = int(pd.read_csv(gap).shape[0])
+              except Exception as e:
+                  out["gap_error"] = str(e)
+          
+          # save to date dir and root
+          with open(os.path.join(base, "analysis_digest.json"), "w") as f:
+              json.dump(out, f, indent=2)
+          
+          with open("analysis_digest.json", "w") as f:
+              json.dump(out, f, indent=2)
           PY
 
       - name: Commit daily artifacts to repo
@@ -269,72 +292,49 @@ jobs:
       - name: Make fetch tool executable (repo path)
         run: chmod +x tools/fetch.sh
 
-      - name: Resolve effective date_dir (prefer latest.json; else newest ≤24h; else yesterday)
+      - name: Resolve effective date_dir (prefer local latest.json; else newest ≤24h; else yesterday)
         id: datedir
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ env.REPO }}
-          BRANCH: ${{ env.BRANCH }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p tmp
           TODAY="$(date -u +%Y-%m-%d)"
-          # Try latest.json (non-critical)
-          tools/fetch.sh latest.json tmp/latest.json || true
+          DATE_DIR=""
 
-          # List /data folders via API
-          curl -fsSL -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            "https://api.github.com/repos/${REPO}/contents/data?ref=${BRANCH}" > tmp/list.json
-
-          python - <<'PY' > tmp/dd.txt
-          import os, json, re, datetime, sys
-          
-          today = os.environ.get("TODAY")
-          if not today:
-              today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-          
-          # Load available date dirs
-          with open("tmp/list.json","r",encoding="utf-8") as f:
-              arr = json.load(f)
-          dates = sorted([x["name"] for x in arr if x.get("type")=="dir" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x.get("name",""))])
-          if not dates:
-              print("ERROR: no date folders in /data", file=sys.stderr)
-              sys.exit(1)
-          
-          today_dt = datetime.datetime.strptime(today, "%Y-%m-%d")
-          cand = [d for d in dates if datetime.datetime.strptime(d,"%Y-%m-%d") <= today_dt]
-          chosen = cand[-1] if cand else dates[-1]
-          
-          # If latest.json exists and is fresh (<=24h), prefer it
-          try:
-              with open("tmp/latest.json","r",encoding="utf-8") as f:
-                  j = json.load(f)
-              ptr = (j.get("date_dir") or "").split("/")[-1]
-              if re.fullmatch(r"\d{4}-\d{2}-\d{2}", ptr) and ptr in dates:
-                  ptr_dt = datetime.datetime.strptime(ptr, "%Y-%m-%d")
-                  age_h = (today_dt - ptr_dt).total_seconds()/3600.0
-                  if 0 <= age_h <= 24:
-                      chosen = ptr
-          except Exception:
-              pass
-          
-          # If chosen is >24h, fall back to yesterday
-          chosen_dt = datetime.datetime.strptime(chosen, "%Y-%m-%d")
-          age_h = (today_dt - chosen_dt).total_seconds()/3600.0
-          if age_h > 24:
-              chosen = (today_dt - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-          
-          print(chosen)
-          PY
-
-          if [ ! -s tmp/dd.txt ]; then
-            echo "::error ::Failed to resolve date_dir"
-            exit 1
+          # 1) local latest.json (if present)
+          if [ -f latest.json ]; then
+            ptr="$(jq -r '.date_dir // empty' latest.json | sed 's|^data/||')"
+            if [ -n "$ptr" ]; then
+              DATE_DIR="$ptr"
+              echo "Using local pointer: $DATE_DIR"
+            fi
           fi
-          echo "date_dir=$(cat tmp/dd.txt)" >> "$GITHUB_OUTPUT"
-          echo "Resolved date_dir: $(cat tmp/dd.txt)" >> "$GITHUB_STEP_SUMMARY"
+
+          # 2) newest folder in /data (if pointer missing)
+          if [ -z "$DATE_DIR" ] && [ -d data ]; then
+            DATE_DIR="$(find data -maxdepth 1 -type d -name '20*' | sort | tail -1 | sed 's|data/||')"
+            [ -n "$DATE_DIR" ] && echo "Using newest data folder: $DATE_DIR"
+          fi
+
+          # 3) ≤24h guard, else fallback to yesterday
+          if [ -n "$DATE_DIR" ]; then
+            py_age="$(python - <<'PY'
+            import os,sys,datetime
+            d=os.environ["DATE_DIR"]
+            dt=datetime.datetime.strptime(d, "%Y-%m-%d")
+            print(int((datetime.datetime.utcnow()-dt).total_seconds()/3600))
+            PY
+            )"
+            if [ "$py_age" -gt 24 ]; then
+              DATE_DIR="$(date -u -d 'yesterday' +%Y-%m-%d)"
+              echo "Pointer too old; fallback to yesterday: $DATE_DIR"
+            fi
+          else
+            DATE_DIR="$(date -u -d 'yesterday' +%Y-%m-%d)"
+            echo "No pointer / dirs; fallback to yesterday: $DATE_DIR"
+          fi
+
+          echo "date_dir=${DATE_DIR}" >> "$GITHUB_OUTPUT"
+          echo "📁 Resolved data directory: data/${DATE_DIR}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fetch overlay/PL/gap with fallback chain (raw → API → Pages)
         env:
