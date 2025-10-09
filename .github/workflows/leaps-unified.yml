@@ -178,13 +178,66 @@ jobs:
             ls -lh "$DD" | tail -n +2 | awk '{printf "  - `%s` (%s)\n", $9, $5}'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Build analysis_digest.json (root + date_dir)
+        if: steps.skipcheck.outputs.already == 'false'
+        shell: bash
+        env:
+          REPO: ${{ env.REPO }}   # e.g., Sevenon7/Tradier_Options
+        run: |
+          set -euo pipefail
+          DD="data/${{ needs.initialize.outputs.date_dir }}"
+          python - <<'PY'
+          import os, csv, json, datetime
+
+          repo = os.environ["REPO"]                       # "Sevenon7/Tradier_Options"
+          dd   = os.path.join("data", os.environ.get("GITHUB_OUTPUT","") or "${{ needs.initialize.outputs.date_dir }}")
+          # we already exported DD in the shell:
+          dd   = os.environ.get("DD", dd)
+
+          def raw_url(path):
+              return f"https://raw.githubusercontent.com/{repo}/main/{path}"
+
+          overlay = f"{dd}/overlay_vwap_macd_rsi.csv"
+          opl     = f"{dd}/option_pl.csv"
+          gap     = f"{dd}/gapdown_above_100sma.csv"
+
+          out = "analysis_digest.json"
+          payload = {
+            "generated_utc": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "raw_links": {
+              "overlay": raw_url(overlay),
+              "option_pl": raw_url(opl),
+              "gap_screen": raw_url(gap),
+              "ready": raw_url(f"{dd}/READY"),
+              "latest": raw_url("latest.json"),
+            }
+          }
+
+          def read_csv(p):
+              try:
+                  with open(p, newline='', encoding='utf-8') as f:
+                      return list(csv.DictReader(f))
+              except FileNotFoundError:
+                  return []
+
+          payload["overlay"]     = read_csv(overlay)
+          payload["option_pl"]   = read_csv(opl)
+          payload["gap_screen"]  = read_csv(gap)
+
+          with open(out, "w", encoding="utf-8") as f:
+              json.dump(payload, f, indent=2)
+          print(f"Wrote {out}")
+          PY
+
       - name: Commit daily artifacts to repo
         if: steps.skipcheck.outputs.already == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "LEAPS daily overlay (producer)"
+          commit_message: "📊 LEAPS daily overlay - ${{ needs.initialize.outputs.date_dir }}"
           branch: ${{ env.BRANCH }}
           add_options: -A
+          commit_options: '--no-verify'
+          file_pattern: 'data/* latest.json analysis_digest.json'
 
       - name: Publish CSV mirror to gh-pages (static backup)
         if: steps.skipcheck.outputs.already == 'false'
