@@ -16,7 +16,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.11"
   DESIRED_PT_TIME: "10:50"   # target local PT fire time
-  WINDOW_MIN: "35"           # ± minutes allowed around target (keeps single daily run)
+  WINDOW_MIN: "600"           # ± minutes allowed around target (keeps single daily run)
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
   OWNER: "Sevenon7"
