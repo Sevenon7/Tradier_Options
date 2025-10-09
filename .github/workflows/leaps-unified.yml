@@ -328,19 +328,76 @@ jobs:
 
           echo "date_dir=$(cat tmp/dd.txt)" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch overlay/PL/gap with fallback chain (raw → API → Pages)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ env.REPO }}
-          BRANCH: ${{ env.BRANCH }}
+      - name: Fetch overlay/PL/gap with local-preferred fallback (raw → API → Pages)
+        id: fetch_data
         shell: bash
+        env:
+          OWNER:  ${{ env.OWNER }}
+          REPO:   ${{ env.REPO }}
+          BRANCH: ${{ env.BRANCH }}
         run: |
           set -euo pipefail
           DD="${{ steps.datedir.outputs.date_dir }}"
-          tools/fetch.sh \
-            "data/${DD}/overlay_vwap_macd_rsi.csv" overlay.csv \
-            "data/${DD}/option_pl.csv"            option_pl.csv \
-            "data/${DD}/gapdown_above_100sma.csv" gap.csv
+          SRC="data/${DD}"
+          echo "Using date_dir: ${DD} (SRC=${SRC})"
+
+          mkdir -p tmp
+          copied=0
+
+          # 1) Local-first copies
+          if [ -f "${SRC}/overlay_vwap_macd_rsi.csv" ]; then
+            cp -f "${SRC}/overlay_vwap_macd_rsi.csv" overlay.csv && copied=$((copied+1))
+            echo "✓ overlay.csv from ${SRC}"
+          fi
+          if [ -f "${SRC}/option_pl.csv" ]; then
+            cp -f "${SRC}/option_pl.csv" option_pl.csv && copied=$((copied+1))
+            echo "✓ option_pl.csv from ${SRC}"
+          fi
+          if [ -f "${SRC}/gapdown_above_100sma.csv" ]; then
+            cp -f "${SRC}/gapdown_above_100sma.csv" gap.csv && copied=$((copied+1))
+            echo "✓ gap.csv from ${SRC}"
+          fi
+
+          # 2) For any missing file(s), try remote fetch via tools/fetch.sh
+          miss=0
+          need_overlay=0
+          [ -s overlay.csv ]   || need_overlay=1
+          need_pl=0
+          [ -s option_pl.csv ] || need_pl=1
+          need_gap=0
+          [ -s gap.csv ]       || need_gap=1
+
+          if [ $need_overlay -eq 1 ] || [ $need_pl -eq 1 ] || [ $need_gap -eq 1 ]; then
+            echo "Some files not found locally; trying remote…"
+            set +e
+            if [ $need_overlay -eq 1 ]; then
+              tools/fetch.sh "data/${DD}/overlay_vwap_macd_rsi.csv" overlay.csv || miss=$((miss+1))
+            fi
+            if [ $need_pl -eq 1 ]; then
+              tools/fetch.sh "data/${DD}/option_pl.csv" option_pl.csv || miss=$((miss+1))
+            fi
+            if [ $need_gap -eq 1 ]; then
+              tools/fetch.sh "data/${DD}/gapdown_above_100sma.csv" gap.csv || miss=$((miss+1))
+            fi
+            set -e
+          fi
+
+          # 3) Require overlay.csv; the others are optional
+          if [ ! -s overlay.csv ]; then
+            echo "::error ::overlay.csv missing after local+remote fallback (checked ${SRC} and GitHub)."
+            exit 1
+          fi
+
+          [ -s option_pl.csv ] || echo "::notice::option_pl.csv missing (optional)"
+          [ -s gap.csv ]       || echo "::notice::gapdown_above_100sma.csv missing (optional)"
+
+          {
+            echo "### Consumer inputs"
+            echo "- date_dir: \`${DD}\`"
+            echo "- overlay.csv: $( [ -s overlay.csv ] && echo present || echo missing )"
+            echo "- option_pl.csv: $( [ -s option_pl.csv ] && echo present || echo missing )"
+            echo "- gap.csv: $( [ -s gap.csv ] && echo present || echo missing )"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Emit quick summary to Job Summary
         run: |
