@@ -1,0 +1,161 @@
+{
+  "date_dir": "data/2025-10-09",
+  "overlay_preview": [
+    {
+      "Ticker": "AMD",
+      "RSI14": 89.9,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 232.89,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 152.5523,
+      "Gap%": 0.31,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "ASTS",
+      "RSI14": 88.88,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 86.79,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 46.0394,
+      "Gap%": -0.61,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "BBAI",
+      "RSI14": 56.87,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 7.49,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 5.8347,
+      "Gap%": 0.0,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "META",
+      "RSI14": 32.18,
+      "MACD>Signal": false,
+      "VWAP": NaN,
+      "LastPx": 733.51,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 723.9382,
+      "Gap%": 0.06,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "MSFT",
+      "RSI14": 54.46,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 522.4,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 499.8376,
+      "Gap%": -0.48,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "MSTR",
+      "RSI14": 42.21,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 320.29,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 372.2194,
+      "Gap%": -1.03,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "MSTU",
+      "RSI14": 39.53,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 4.51,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 7.0512,
+      "Gap%": -2.08,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "NVDA",
+      "RSI14": 71.56,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 192.57,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 165.9614,
+      "Gap%": 1.65,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "PLTR",
+      "RSI14": 53.27,
+      "MACD>Signal": false,
+      "VWAP": NaN,
+      "LastPx": 185.47,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 154.7839,
+      "Gap%": 0.01,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "QQQ",
+      "RSI14": 63.62,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 610.7,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 562.2221,
+      "Gap%": 0.01,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "RDDT",
+      "RSI14": 25.38,
+      "MACD>Signal": false,
+      "VWAP": NaN,
+      "LastPx": 211.7,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 179.8931,
+      "Gap%": 0.47,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "RKLB",
+      "RSI14": 79.17,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 66.42,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 41.3968,
+      "Gap%": -0.63,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "UUUU",
+      "RSI14": 76.13,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 19.7,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 9.5614,
+      "Gap%": 5.56,
+      "Guidance": "HOLD"
+    },
+    {
+      "Ticker": "VST",
+      "RSI14": 48.93,
+      "MACD>Signal": true,
+      "VWAP": NaN,
+      "LastPx": 210.0,
+      "Px_vs_VWAP": "Unknown",
+      "SMA100": 190.9753,
+      "Gap%": 0.22,
+      "Guidance": "HOLD"
+    }
+  ],
+  "option_pl_rows": 2,
+  "gap_rows": 0
+}
