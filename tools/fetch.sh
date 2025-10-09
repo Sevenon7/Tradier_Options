@@ -1,66 +1,108 @@
 #!/usr/bin/env bash
-# .github/tools/fetch.sh
-# Robust fetcher: raw.githubusercontent.com  → GitHub REST API (raw) → GitHub Pages mirror
-# Env you can set: REPO (owner/name), BRANCH, OWNER (for Pages), GITHUB_TOKEN
-# Usage: fetch.sh <repo-path> <outfile> [<repo-path> <outfile> ...]
+# tools/fetch.sh
+# Usage:
+#   tools/fetch.sh <src1> <dest1> [<src2> <dest2> ...]
+# Where <src> is a repo-relative path (e.g., data/2025-10-02/overlay_vwap_macd_rsi.csv)
+# and <dest> is a local file path to write.
 
 set -euo pipefail
 
-REPO="${REPO:-Sevenon7/Tradier_Options}"
-BRANCH="${BRANCH:-main}"
-OWNER="${OWNER:-Sevenon7}"  # used for Pages fallback
-AUTH="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+# ---- Config discovery ---------------------------------------------------------
+OWNER_DEFAULT="${OWNER:-}"
+REPO_DEFAULT="${REPO:-}"
+BRANCH_DEFAULT="${BRANCH:-main}"
 
-is_html() {
-  # quick heuristic
-  grep -qiE '<(html|!doctype|title|meta)' "$1" 2>/dev/null
+# Try to infer OWNER/REPO from git remote if not provided
+if [[ -z "${OWNER_DEFAULT}" || -z "${REPO_DEFAULT}" ]]; then
+  remote_url="$(git config --get remote.origin.url || true)"
+  if [[ -n "$remote_url" ]]; then
+    # Handle https and ssh formats
+    # https://github.com/Owner/Repo.git
+    # git@github.com:Owner/Repo.git
+    repo_path="${remote_url%.git}"
+    repo_path="${repo_path#git@github.com:}"
+    repo_path="${repo_path#https://github.com/}"
+    OWNER_DEFAULT="${repo_path%%/*}"
+    REPO_DEFAULT="${repo_path##*/}"
+  fi
+fi
+
+OWNER="${OWNER_DEFAULT:?OWNER env not set and could not infer from git remote}"
+REPO="${REPO_DEFAULT:?REPO env not set and could not infer from git remote}"
+BRANCH="${BRANCH_DEFAULT}"
+
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+PAGES_BASE="${PAGES_BASE:-https://${OWNER}.github.io/${REPO}}"
+
+debug() { [[ "${FETCH_DEBUG:-false}" == "true" ]] && echo "[fetch.sh] $*" >&2 || true; }
+
+curl_raw() {
+  local src="$1" dest="$2"
+  local url="https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${src}"
+  debug "RAW   → ${url}"
+  if curl -fL --retry 3 --retry-delay 2 -sS "${url}" -o "${dest}"; then
+    echo "raw" > "${dest}.source"
+    return 0
+  fi
+  return 1
+}
+
+curl_api_contents() {
+  local src="$1" dest="$2"
+  local url="https://api.github.com/repos/${OWNER}/${REPO}/contents/${src}?ref=${BRANCH}"
+  debug "API   → ${url}"
+  # Use the contents API with "raw" accept to stream file bytes directly.
+  # Docs: REST API → Repository contents. Accept: application/vnd.github.raw
+  # https://docs.github.com/en/rest/repos/contents
+  local auth=()
+  [[ -n "${GITHUB_TOKEN}" ]] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  if curl -fSL -sS \
+      -H "Accept: application/vnd.github.raw" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "${auth[@]}" \
+      "${url}" -o "${dest}"; then
+    echo "api" > "${dest}.source"
+    return 0
+  fi
+  return 1
+}
+
+curl_pages() {
+  local src="$1" dest="$2"
+  local url="${PAGES_BASE}/${src}"
+  debug "PAGES → ${url}"
+  if curl -fL --retry 3 --retry-delay 2 -sS "${url}" -o "${dest}"; then
+    echo "pages" > "${dest}.source"
+    return 0
+  fi
+  return 1
 }
 
 fetch_one() {
-  local path="$1" out="$2" used=""
+  local src="$1" dest="$2"
+  mkdir -p "$(dirname "$dest")"
+  rm -f "${dest}" "${dest}.source"
 
-  local raw="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${path}"
-  local api="https://api.github.com/repos/${REPO}/contents/${path}?ref=${BRANCH}"
-  local pages="https://${OWNER}.github.io/$(basename "${REPO}")/${path}"
+  # Try RAW → API → PAGES
+  if curl_raw        "$src" "$dest"; then echo "OK: ${src} (raw)   → ${dest}"; return 0; fi
+  if curl_api_contents "$src" "$dest"; then echo "OK: ${src} (api)   → ${dest}"; return 0; fi
+  if curl_pages      "$src" "$dest"; then echo "OK: ${src} (pages) → ${dest}"; return 0; fi
 
-  # --- 1) RAW CDN (fast) ---
-  for attempt in 1 2 3; do
-    if curl -fsSL --retry 2 --retry-delay 2 --max-time 25 "$raw" -o "$out"; then
-      used="raw"
-      break
-    fi
-    sleep $((attempt*2))
-  done
-
-  # --- 2) REST API (raw) ---
-  if [ -z "${used}" ] || [ ! -s "$out" ] || is_html "$out"; then
-    rm -f "$out"
-    if curl -fsSL --max-time 25 \
-      -H "Accept: application/vnd.github.raw" \
-      ${AUTH:+-H "Authorization: Bearer ${AUTH}"} \
-      "$api" -o "$out" ; then
-      used="api"
-    fi
-  fi
-
-  # --- 3) GitHub Pages mirror ---
-  if [ -z "${used}" ] || [ ! -s "$out" ] || is_html "$out"; then
-    rm -f "$out"
-    if curl -fsSL --max-time 25 "$pages" -o "$out" ; then
-      used="pages"
-    fi
-  fi
-
-  # --- Validate result ---
-  if [ ! -s "$out" ] || is_html "$out"; then
-    echo "::error ::fetch.sh failed for ${path} (raw/api/pages)"
-    return 1
-  fi
-
-  echo "fetched:${path} method:${used} size:$(wc -c < "$out")" >&2
+  echo "MISS: ${src}" >&2
+  return 1
 }
 
+if (( $# == 0 || ($# % 2) != 0 )); then
+  echo "Usage: $0 <src1> <dest1> [<src2> <dest2> ...]" >&2
+  exit 64
+fi
+
+overall_ok=true
 while (( "$#" )); do
-  p="$1"; o="$2"; shift 2
-  fetch_one "$p" "$o"
+  src="$1"; dest="$2"; shift 2
+  if ! fetch_one "$src" "$dest"; then
+    overall_ok=false
+  fi
 done
+
+$overall_ok && exit 0 || exit 1
