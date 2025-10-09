@@ -144,6 +144,8 @@ jobs:
 
       - name: Enrich overlay with intraday VWAP (optional)
         if: steps.skipcheck.outputs.already == 'false'
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         continue-on-error: true
         run: |
           if [ -f tools/enrich_overlay_with_vwap.py ]; then
@@ -188,68 +190,67 @@ jobs:
       - name: Build analysis_digest.json (root + date_dir)
         if: steps.skipcheck.outputs.already == 'false'
         env:
-          DATE_ONLY: ${{ needs.initialize.outputs.date_dir }}   # e.g. 2025-10-08
+          DD: ${{ steps.collect.outputs.date_dir }}   # e.g. 2025-10-09
         shell: bash
         run: |
           set -euo pipefail
+          ROOT="${GITHUB_WORKSPACE}"
+          OVER="data/${DD}/overlay_vwap_macd_rsi.csv"
+          PL="data/${DD}/option_pl.csv"
+          GAP="data/${DD}/gapdown_above_100sma.csv"
 
-          BASE_DIR="data/${DATE_ONLY}"
-          OVERLAY="${BASE_DIR}/overlay_vwap_macd_rsi.csv"
-          OPTPL="${BASE_DIR}/option_pl.csv"
-          GAP="${BASE_DIR}/gapdown_above_100sma.csv"
-
-          if [ ! -f "${OVERLAY}" ]; then
-            echo "::error ::overlay CSV not found at ${OVERLAY}"
+          if [ ! -f "$OVER" ]; then
+            echo "::error ::overlay CSV missing at $OVER"
             exit 1
           fi
 
           python - <<'PY'
-          import os, json, datetime, pandas as pd
+          import os, json
+          import pandas as pd
           
-          date_only = os.environ["DATE_ONLY"]
-          base = os.path.join("data", date_only)
+          dd = os.environ["DD"]                         # 'YYYY-MM-DD'
+          over = f"data/{dd}/overlay_vwap_macd_rsi.csv"
+          opl  = f"data/{dd}/option_pl.csv"
+          gap  = f"data/{dd}/gapdown_above_100sma.csv"
           
-          overlay = os.path.join(base, "overlay_vwap_macd_rsi.csv")
-          optpl   = os.path.join(base, "option_pl.csv")
-          gap     = os.path.join(base, "gapdown_above_100sma.csv")
+          out_path = "analysis_digest.json"
+          digest = {"date_dir": f"data/{dd}"}
           
-          out = {
-              "generated_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-              "raw_links": {
-                  "overlay": f"https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/{overlay}",
-                  "option_pl": f"https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/{optpl}",
-                  "gap_screen": f"https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/{gap}",
-                  "ready": f"https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/{base}/READY",
-                  "latest": "https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main/latest.json",
-              },
-              "overlay_rows": 0,
-              "option_pl_rows": 0,
-              "gap_rows": 0,
-          }
-          
-          try:
-              out["overlay_rows"] = int(pd.read_csv(overlay).shape[0])
-          except Exception as e:
-              out["overlay_error"] = str(e)
-          
-          if os.path.exists(optpl):
+          def safe_rows(path, want_cols=None, head_n=50):
+              if not os.path.exists(path):
+                  return None
               try:
-                  out["option_pl_rows"] = int(pd.read_csv(optpl).shape[0])
+                  df = pd.read_csv(path)
+                  if want_cols:
+                      cols = [c for c in want_cols if c in df.columns]
+                      df = df[cols]
+                  return df.head(head_n).to_dict(orient="records")
               except Exception as e:
-                  out["option_pl_error"] = str(e)
+                  digest.setdefault("errors", []).append(f"{os.path.basename(path)}: {e}")
+                  return None
+          
+          digest["overlay_preview"] = safe_rows(
+              over,
+              want_cols=["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"],
+              head_n=30
+          )
+          
+          digest["option_pl_rows"] = 0
+          if os.path.exists(opl):
+              try:
+                  digest["option_pl_rows"] = int(pd.read_csv(opl).shape[0])
+              except Exception as e:
+                  digest.setdefault("errors", []).append(f"option_pl.csv: {e}")
           
           if os.path.exists(gap):
               try:
-                  out["gap_rows"] = int(pd.read_csv(gap).shape[0])
+                  digest["gap_rows"] = int(pd.read_csv(gap).shape[0])
               except Exception as e:
-                  out["gap_error"] = str(e)
+                  digest.setdefault("errors", []).append(f"gapdown_above_100sma.csv: {e}")
           
-          # save to date dir and root
-          with open(os.path.join(base, "analysis_digest.json"), "w") as f:
-              json.dump(out, f, indent=2)
-          
-          with open("analysis_digest.json", "w") as f:
-              json.dump(out, f, indent=2)
+          with open(out_path, "w") as f:
+              json.dump(digest, f, indent=2)
+          print(f"Wrote {out_path}")
           PY
 
       - name: Commit daily artifacts to repo
@@ -292,49 +293,40 @@ jobs:
       - name: Make fetch tool executable (repo path)
         run: chmod +x tools/fetch.sh
 
-      - name: Resolve effective date_dir (prefer local latest.json; else newest ≤24h; else yesterday)
+      - name: Resolve effective date_dir (prefer local latest.json; else newest ≤today; else yesterday)
         id: datedir
         shell: bash
         run: |
           set -euo pipefail
           TODAY="$(date -u +%Y-%m-%d)"
-          DATE_DIR=""
+          mkdir -p tmp
 
-          # 1) local latest.json (if present)
-          if [ -f latest.json ]; then
+          # 1) Try local latest.json pointer
+          if [ -s latest.json ]; then
             ptr="$(jq -r '.date_dir // empty' latest.json | sed 's|^data/||')"
             if [ -n "$ptr" ]; then
-              DATE_DIR="$ptr"
-              echo "Using local pointer: $DATE_DIR"
+              echo "Using local pointer: $ptr"
+              echo "$ptr" > tmp/dd.txt
             fi
           fi
 
-          # 2) newest folder in /data (if pointer missing)
-          if [ -z "$DATE_DIR" ] && [ -d data ]; then
-            DATE_DIR="$(find data -maxdepth 1 -type d -name '20*' | sort | tail -1 | sed 's|data/||')"
-            [ -n "$DATE_DIR" ] && echo "Using newest data folder: $DATE_DIR"
-          fi
-
-          # 3) ≤24h guard, else fallback to yesterday
-          if [ -n "$DATE_DIR" ]; then
-            py_age="$(python - <<'PY'
-            import os,sys,datetime
-            d=os.environ["DATE_DIR"]
-            dt=datetime.datetime.strptime(d, "%Y-%m-%d")
-            print(int((datetime.datetime.utcnow()-dt).total_seconds()/3600))
-            PY
-            )"
-            if [ "$py_age" -gt 24 ]; then
-              DATE_DIR="$(date -u -d 'yesterday' +%Y-%m-%d)"
-              echo "Pointer too old; fallback to yesterday: $DATE_DIR"
+          # 2) Fallback: newest folder ≤ today
+          if [ ! -s tmp/dd.txt ]; then
+            d="$(ls -1d data/20* 2>/dev/null | sed 's|^data/||' | sort | awk -v t="$TODAY" '$0<=t' | tail -1)"
+            if [ -n "$d" ]; then
+              echo "Using newest existing folder: $d"
+              echo "$d" > tmp/dd.txt
             fi
-          else
-            DATE_DIR="$(date -u -d 'yesterday' +%Y-%m-%d)"
-            echo "No pointer / dirs; fallback to yesterday: $DATE_DIR"
           fi
 
-          echo "date_dir=${DATE_DIR}" >> "$GITHUB_OUTPUT"
-          echo "📁 Resolved data directory: data/${DATE_DIR}" >> "$GITHUB_STEP_SUMMARY"
+          # 3) Final fallback: yesterday
+          if [ ! -s tmp/dd.txt ]; then
+            y="$(date -u -d 'yesterday' +%Y-%m-%d)"
+            echo "Falling back to yesterday: $y"
+            echo "$y" > tmp/dd.txt
+          fi
+
+          echo "date_dir=$(cat tmp/dd.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Fetch overlay/PL/gap with fallback chain (raw → API → Pages)
         env:
