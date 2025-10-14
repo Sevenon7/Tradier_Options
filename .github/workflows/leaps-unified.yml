@@ -40,7 +40,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.11"
   DESIRED_PT_TIME: "12:35"
-  WINDOW_MIN: "35"
+  WINDOW_MIN: "185"
   OWNER: "Sevenon7"
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
