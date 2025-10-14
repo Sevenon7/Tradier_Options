@@ -1,7 +1,6 @@
 name: LEAPS Unified (produce + consume)
 
 on:
-  # Run at both UTC times; time-gate picks the right one (handles DST)
   schedule:
     # PDT (Mar–Oct): 12:35 PT == 19:35 UTC
     - cron: '35 19 * 3-10 1-5'
@@ -40,16 +39,14 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  DESIRED_PT_TIME: "12:35"     # <— new target
+  DESIRED_PT_TIME: "12:35"
   WINDOW_MIN: "35"
   OWNER: "Sevenon7"
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
   DATA_RETENTION_DAYS: "30"
   MAX_RETRY_ATTEMPTS: "3"
-  # Make sure Python sees repo-root for `tools.*` imports
   PYTHONPATH: ${{ github.workspace }}
-  # Public mirrors (used by fetch.sh, consumer)
   PAGES_BASE: "https://sevenon7.github.io/Tradier_Options"
   JSDELIVR_BASE: "https://cdn.jsdelivr.net/gh/Sevenon7/Tradier_Options@main"
   RAW_BASE: "https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main"
@@ -123,11 +120,13 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
-        with: { python-version: ${{ env.PYTHON_VERSION }} }
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -191,7 +190,8 @@ jobs:
 
       - name: Build Actual Option P/L (fallback-safe)
         if: steps.skipcheck.outputs.already == 'false'
-        env: { TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }} }
+        env:
+          TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
         run: |
           if [ -f tools/option_pl_builder.py ]; then
             python tools/option_pl_builder.py || echo "⚠️ option_pl_builder failed (continuing)"
@@ -228,7 +228,6 @@ jobs:
           with open('validation_report.json','w') as f: json.dump({"ok":ok,"errs":errs}, f)
           print(f"valid={ok}")
           PY
-          # export a simple flag
           if jq -e '.ok==true' validation_report.json >/dev/null 2>&1; then
             echo "valid=true" >> "$GITHUB_OUTPUT"
           else
@@ -243,16 +242,11 @@ jobs:
           TODAY="${{ needs.initialize.outputs.date_dir }}"
           DD="data/${TODAY}"
           mkdir -p "$DD"
-          # Move root artifacts into date folder
           for f in overlay_vwap_macd_rsi.csv option_pl.csv gapdown_above_100sma.csv vwap_missing.json validation_report.json; do
             [ -f "$f" ] && mv -f "$f" "$DD/"
           done
-
-          # latest.json at repo root (points to date_dir)
           jq -n --arg dd "$DD" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{date_dir:$dd, timestamp:$ts}' > latest.json
-
-          # analysis_digest.json at repo root (small preview + counts)
           python - <<'PY'
           import os, json, pandas as pd
           dd=os.environ["TODAY"]; base=f"data/{dd}"
@@ -277,7 +271,6 @@ jobs:
                       dig[nm+"_error"]=str(e)
           with open("analysis_digest.json","w") as f: json.dump(dig,f,indent=2)
           PY
-
           echo "date_dir=${TODAY}" >> "$GITHUB_OUTPUT"
 
       - name: Commit artifacts to repo
@@ -289,21 +282,24 @@ jobs:
           add_options: -A
           file_pattern: 'data/* latest.json analysis_digest.json'
 
+      - name: Prepare public folder for Pages
+        if: steps.skipcheck.outputs.already == 'false'
+        run: |
+          set -euo pipefail
+          TODAY="${{ needs.initialize.outputs.date_dir }}"
+          rm -rf public
+          mkdir -p public/data/"${TODAY}"
+          cp -R data/"${TODAY}"/. public/data/"${TODAY}"/ 2>/dev/null || true
+          cp -f latest.json analysis_digest.json public/
+
       - name: Publish mirror to gh-pages (data dir + root digest files)
+        if: steps.skipcheck.outputs.already == 'false'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: public
           keep_files: true
-        run: |
-          set -euo pipefail
-          TODAY="${{ needs.initialize.outputs.date_dir }}"
-          mkdir -p public/data/${TODAY}
-          cp -R data/${TODAY}/* public/data/${TODAY}/ 2>/dev/null || true
-          # include root pointers in Pages root
-          cp -f latest.json analysis_digest.json public/
-          echo "Publishing:"
-          find public -maxdepth 2 -type f | sed 's/^/ - /'
+          enable_jekyll: false
 
   consumer:
     needs: [initialize, producer]
@@ -313,7 +309,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       - name: Ensure OS tools
         run: |
@@ -329,16 +326,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p tmp
-          # Try Pages → jsDelivr → raw for latest.json
           tools/fetch.sh latest.json tmp/latest.json || true
           if [ -s tmp/latest.json ]; then
             DATE_DIR="$(jq -r '.date_dir // empty' tmp/latest.json | sed 's|^data/||')"
           fi
-          # Fallback: pick newest data folder locally
           if [ -z "${DATE_DIR:-}" ]; then
             DATE_DIR="$(find data -maxdepth 1 -type d -name '20*' | sort -r | head -1 | xargs -I{} basename {} || true)"
           fi
-          # Final fallback: today UTC
           if [ -z "${DATE_DIR:-}" ]; then
             DATE_DIR="$(date -u +%Y-%m-%d)"
           fi
