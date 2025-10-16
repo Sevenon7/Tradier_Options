@@ -130,11 +130,11 @@ jobs:
       date_dir: ${{ needs.initialize.outputs.date_dir }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with: { fetch-depth: 0 }
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -282,7 +282,7 @@ jobs:
 
       - name: Commit artifacts
         if: steps.skipcheck.outputs.already == 'false'
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "LEAPS daily overlay — ${{ needs.initialize.outputs.date_dir }}"
           branch: ${{ env.BRANCH }}
@@ -324,7 +324,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with: { fetch-depth: 0 }
 
       - name: OS tools + jq
