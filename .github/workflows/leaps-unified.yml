@@ -43,7 +43,7 @@ env:
   PYTHON_VERSION: "3.11"
   # Time-gate target & window (covers DST with single cron)
   DESIRED_PT_TIME: "12:35"
-  WINDOW_MIN: "60"
+  WINDOW_MIN: "180"
 
   # Ensure tools/*.py modules import cleanly (VWAP enrichment)
   PYTHONPATH: ${{ github.workspace }}
