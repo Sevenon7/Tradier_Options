@@ -176,11 +176,11 @@ jobs:
         run: |
           set -euo pipefail
           cat > requirements.txt <<'REQ'
-requests==2.32.3
-pandas==2.2.2
-numpy==1.26.4
-python-dateutil==2.9.0.post0
-REQ
+            requests==2.32.3
+            pandas==2.2.2
+            numpy==1.26.4
+            python-dateutil==2.9.0.post0
+            REQ
           {
             echo "### 📦 Dependencies"
             echo '```'
@@ -515,34 +515,34 @@ REQ
           
           # Generate simple index.html for Pages
           cat > pages_pub/index.html <<'HTML'
-<!DOCTYPE html>
-<html>
-<head>
-  <title>LEAPS Data</title>
-  <meta charset="utf-8">
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; 
-           max-width: 800px; margin: 40px auto; padding: 0 20px; }
-    h1 { color: #24292e; }
-    pre { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow-x: auto; }
-    a { color: #0366d6; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-  </style>
-</head>
-<body>
-  <h1>📊 LEAPS Options Data</h1>
-  <p>Latest data available at:</p>
-  <ul>
-    <li><a href="latest.json">latest.json</a> - Pointer to most recent data</li>
-    <li><a href="analysis_digest.json">analysis_digest.json</a> - Analysis summary</li>
-  </ul>
-  <p>Generated: <span id="timestamp"></span></p>
-  <script>
-    document.getElementById('timestamp').textContent = new Date().toISOString();
-  </script>
-</body>
-</html>
-HTML
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <title>LEAPS Data</title>
+              <meta charset="utf-8">
+              <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; 
+                       max-width: 800px; margin: 40px auto; padding: 0 20px; }
+                h1 { color: #24292e; }
+                pre { background: #f6f8fa; padding: 16px; border-radius: 6px; overflow-x: auto; }
+                a { color: #0366d6; text-decoration: none; }
+                a:hover { text-decoration: underline; }
+              </style>
+            </head>
+            <body>
+              <h1>📊 LEAPS Options Data</h1>
+              <p>Latest data available at:</p>
+              <ul>
+                <li><a href="latest.json">latest.json</a> - Pointer to most recent data</li>
+                <li><a href="analysis_digest.json">analysis_digest.json</a> - Analysis summary</li>
+              </ul>
+              <p>Generated: <span id="timestamp"></span></p>
+              <script>
+                document.getElementById('timestamp').textContent = new Date().toISOString();
+              </script>
+            </body>
+            </html>
+            HTML
           
           echo "📄 Prepared $(find pages_pub -type f | wc -l) files for GitHub Pages"
 
@@ -613,15 +613,15 @@ HTML
             if [[ "$ptr" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
               # Check if pointer is ≤24h old
               if python3 - <<PY > /tmp/ptr_check.txt 2>&1
-import sys, datetime, os
-try:
-    today = datetime.datetime.strptime(os.environ["TODAY"], "%Y-%m-%d")
-    ptr = datetime.datetime.strptime(os.environ["PTR"], "%Y-%m-%d")
-    age_hours = (today - ptr).total_seconds() / 3600.0
-    print(os.environ["PTR"] if 0 <= age_hours <= 24 else "")
-except Exception as e:
-    print(f"", file=sys.stderr)
-PY
+              import sys, datetime, os
+              try:
+                  today = datetime.datetime.strptime(os.environ["TODAY"], "%Y-%m-%d")
+                  ptr = datetime.datetime.strptime(os.environ["PTR"], "%Y-%m-%d")
+                  age_hours = (today - ptr).total_seconds() / 3600.0
+                  print(os.environ["PTR"] if 0 <= age_hours <= 24 else "")
+              except Exception as e:
+                  print(f"", file=sys.stderr)
+              PY
               then
                 PTR_OK="$(cat /tmp/ptr_check.txt || true)"
                 if [[ -n "$PTR_OK" ]]; then
