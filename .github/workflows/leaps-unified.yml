@@ -175,12 +175,13 @@ jobs:
       - name: Create requirements.txt (deterministic)
         run: |
           set -euo pipefail
-          cat > requirements.txt <<'REQ'
-            requests==2.32.3
-            pandas==2.2.2
-            numpy==1.26.4
-            python-dateutil==2.9.0.post0
-            REQ
+          printf '%s\n' \
+            'requests==2.32.3' \
+            'pandas==2.2.2' \
+            'numpy==1.26.4' \
+            'python-dateutil==2.9.0.post0' \
+            > requirements.txt
+      
           {
             echo "### 📦 Dependencies"
             echo '```'
@@ -215,10 +216,12 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip setuptools wheel
-          pip install --require-hashes --no-deps -r requirements.txt || {
-            echo "::warning::Hash verification not available, installing without hashes"
-            pip install -r requirements.txt
-          }
+          pip install -r requirements.txt
+
+      - name: Show requirements.txt (debug)
+        run: |
+          echo "--- requirements.txt ---"
+          nl -ba requirements.txt
 
       - name: Verify Python environment
         continue-on-error: true
