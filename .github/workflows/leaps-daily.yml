@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # >>> NEW STEP: ensure a dependency file exists BEFORE setup-python (required for cache: pip)
       - name: Ensure requirements.txt for caching
@@ -33,7 +33,7 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6.0.0
         with:
           python-version: '3.11'
           cache: 'pip'

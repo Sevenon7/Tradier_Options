@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Time Gate (America/Los_Angeles)
         id: timegate
@@ -50,7 +50,7 @@ jobs:
 
       - name: Setup Python
         if: steps.timegate.outputs.should_run == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6.0.0
         with:
           python-version: '3.11'
           cache: 'pip'
