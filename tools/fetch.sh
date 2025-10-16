@@ -1,81 +1,93 @@
 #!/usr/bin/env bash
-# Usage:
-#   tools/fetch.sh SRC1 DST1 [SRC2 DST2 ...]
-# Where SRC is a path relative to repo root, e.g. "data/2025-10-10/overlay_vwap_macd_rsi.csv"
-# Dest is a local filepath to write.
+# fetch.sh — resilient fetcher with layered fallbacks & backoff
+# Usage: tools/fetch.sh <remote_path> <local_out> [<remote_path> <local_out> ...]
 
 set -euo pipefail
 
 OWNER="${OWNER:-Sevenon7}"
-REPO="${REPO:-Tradier_Options}"
+REPO="${REPO:-Sevenon7/Tradier_Options}"
 BRANCH="${BRANCH:-main}"
+TOKEN="${GITHUB_TOKEN:-${TOKEN:-}}"
 
-PAGES_BASE="${PAGES_BASE:-https://${OWNER}.github.io/${REPO}}"
-JSDELIVR_BASE="${JSDELIVR_BASE:-https://cdn.jsdelivr.net/gh/${OWNER}/${REPO}@${BRANCH}}"
-RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}}"
-
-UA="${UA:-Sevenon7-LEAPS/1.0 (curl)}"
-ACCEPT="${ACCEPT:-text/plain, application/octet-stream, */*}"
-MAX_RETRIES="${MAX_RETRIES:-4}"
-SLEEP_BASE="${SLEEP_BASE:-2}" # seconds
-
-log() { echo "[$(date -u +%H:%M:%S)] $*" >&2; }
+ua="leaps-unified-fetcher/1.0 (+github actions)"
+auth_hdr=()
+[[ -n "$TOKEN" ]] && auth_hdr=(-H "Authorization: Bearer ${TOKEN}")
 
 curl_get() {
-  # $1 URL, $2 OUT
+  # $1=url  $2=outfile
   local url="$1" out="$2"
-  local code
-  code=$(curl -fsSL -A "$UA" -H "Accept: $ACCEPT" -w "%{http_code}" -o "$out" "$url" || true)
-  echo "$code"
+  local attempt=1 max=4
+  while :; do
+    set +e
+    http=$(curl -sS -L -w "%{http_code}" -o "${out}.part" \
+      -H "User-Agent: ${ua}" \
+      -H "Accept: */*" \
+      "${auth_hdr[@]}" \
+      "$url")
+    rc=$?
+    set -e
+    if [[ $rc -eq 0 && "$http" =~ ^2 ]]; then
+      mv "${out}.part" "$out"
+      return 0
+    fi
+    rm -f "${out}.part" || true
+    if (( attempt >= max )); then
+      return 22
+    fi
+    sleep $(( 2 ** attempt ))
+    attempt=$(( attempt + 1 ))
+  done
 }
 
 fetch_one() {
-  # $1 SRC path, $2 DEST
-  local src="$1" dest="$2"
-  local tries=0
-  local urls=(
-    "${PAGES_BASE}/${src}"
-    "${JSDELIVR_BASE}/${src}"
-    "${RAW_BASE}/${src}"
-  )
+  local path="$1" out="$2"
 
-  mkdir -p "$(dirname "$dest")"
+  # 0) local file present?
+  if [[ -f "$path" ]]; then
+    cp -f "$path" "$out" && return 0
+  fi
 
-  for (( tries=1; tries<=MAX_RETRIES; tries++ )); do
-    local u
-    for u in "${urls[@]}"; do
-      log "GET (try ${tries}/${MAX_RETRIES}) → ${u}"
-      code=$(curl_get "$u" "$dest")
-      if [[ "$code" == "200" ]]; then
-        log "OK ${u} → ${dest}"
-        return 0
-      fi
-      # treat 404 on first two mirrors as soft-fail; 429/5xx backoff
-      if [[ "$code" =~ ^(429|5..) ]]; then
-        sleep_time=$(( SLEEP_BASE * tries ))
-        log "HTTP $code from ${u} — backing off ${sleep_time}s"
-        sleep "${sleep_time}"
-        continue
-      fi
-      log "HTTP $code from ${u}"
-    done
-    # between rounds wait a bit
-    sleep_time=$(( SLEEP_BASE * tries ))
-    log "Round ${tries} done — sleeping ${sleep_time}s before retry"
-    sleep "${sleep_time}"
-  done
+  # Base URLs
+  local pages="https://${OWNER}.github.io/${REPO#*/}/${path}"
+  local jsd="https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}/${path}"
+  local raw="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${path}"
+  local api="https://api.github.com/repos/${REPO}/contents/${path}?ref=${BRANCH}"
 
-  log "FAILED to fetch ${src} after ${MAX_RETRIES} attempts"
-  return 1
+  # 1) Pages
+  if curl_get "$pages" "$out"; then return 0; fi
+  echo "MISS (pages): $path" 1>&2
+
+  # 2) jsDelivr
+  if curl_get "$jsd" "$out"; then return 0; fi
+  echo "MISS (jsDelivr): $path" 1>&2
+
+  # 3) raw
+  if curl_get "$raw" "$out"; then return 0; fi
+  echo "MISS (raw): $path" 1>&2
+
+  # 4) API (base64 decode)
+  tmp="$(mktemp)"
+  if curl_get "$api" "$tmp"; then
+    if command -v jq >/dev/null 2>&1; then
+      jq -r '.content' "$tmp" | tr -d '\n' | base64 --decode > "$out" || true
+      rm -f "$tmp"
+      [[ -s "$out" ]] && return 0
+    fi
+    rm -f "$tmp"
+  fi
+
+  echo "::error ::fetch failed for ${path} (all fallbacks exhausted)"
+  return 22
 }
 
-# Parse pairs
-if (( "$#" % 2 != 0 )); then
-  echo "Usage: $0 SRC1 DST1 [SRC2 DST2 ...]" >&2
-  exit 2
+# ---- main ----
+if (( $# < 2 || ($# % 2) != 0 )); then
+  echo "Usage: $0 <remote_path> <local_out> [<remote_path> <local_out> ...]" 1>&2
+  exit 64
 fi
 
-while (( "$#" )); do
-  SRC="$1"; DST="$2"; shift 2
-  fetch_one "$SRC" "$DST"
+while (( $# )); do
+  rp="$1"; shift
+  out="$1"; shift
+  fetch_one "$rp" "$out"
 done
