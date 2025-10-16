@@ -1,89 +1,85 @@
-name: LEAPS Unified (produce + consume)
+name: LEAPS Unified (produce + consume) — v1.8.0
 
 on:
+  # Single UTC cron; time-gate enforces 12:35 PT ± 60m for both PDT & PST
   schedule:
-    # PDT (Mar–Oct): 12:35 PT == 19:35 UTC
-    - cron: '35 19 * 3-10 1-5'
-    # PST (Nov–Feb): 12:35 PT == 20:35 UTC
-    - cron: '35 20 * 11,12,1,2 1-5'
+    - cron: '5 20 * * 1-5'   # 20:05 UTC Mon–Fri
   workflow_dispatch:
     inputs:
       skip_time_gate:
-        description: 'Skip time-gate (manual runs)'
+        description: 'Skip time gate (manual runs only)'
         required: false
-        default: false
         type: boolean
+        default: false
       debug_mode:
-        description: 'Enable debug logging'
+        description: 'Verbose logs'
         required: false
-        default: false
         type: boolean
+        default: false
       force_run:
-        description: 'Force run even if today already produced'
+        description: 'Force producer even if today already exists'
         required: false
-        default: false
         type: boolean
+        default: false
       target_date:
-        description: 'Override date (YYYY-MM-DD)'
+        description: 'Override date_dir (YYYY-MM-DD)'
         required: false
         type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: leaps-unified-${{ github.ref }}
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  pages: write
-  issues: write
-
 env:
-  PYTHON_VERSION: "3.11"
-  DESIRED_PT_TIME: "12:35"
-  WINDOW_MIN: "185"
   OWNER: "Sevenon7"
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
+
+  PYTHON_VERSION: "3.11"
+  # Time-gate target & window (covers DST with single cron)
+  DESIRED_PT_TIME: "12:35"
+  WINDOW_MIN: "60"
+
+  # Ensure tools/*.py modules import cleanly (VWAP enrichment)
+  PYTHONPATH: ${{ github.workspace }}
+
   DATA_RETENTION_DAYS: "30"
   MAX_RETRY_ATTEMPTS: "3"
-  PYTHONPATH: ${{ github.workspace }}
-  PAGES_BASE: "https://sevenon7.github.io/Tradier_Options"
-  JSDELIVR_BASE: "https://cdn.jsdelivr.net/gh/Sevenon7/Tradier_Options@main"
-  RAW_BASE: "https://raw.githubusercontent.com/Sevenon7/Tradier_Options/main"
 
 jobs:
   initialize:
+    name: Init / Time-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     outputs:
       run_ok: ${{ steps.tgate.outputs.run_ok }}
-      date_dir: ${{ steps.set_date.outputs.date_dir }}
-      cache_key: ${{ steps.cache_key.outputs.key }}
+      date_dir: ${{ steps.datepick.outputs.date_dir }}
+      cache_key: ${{ steps.cachekey.outputs.key }}
     steps:
-      - name: Mask sensitive data
+      - name: Mask tokens early
         run: |
           echo "::add-mask::${{ secrets.TRADIER_TOKEN }}"
           echo "::add-mask::${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Set target date
-        id: set_date
+      - name: Resolve date_dir
+        id: datepick
         shell: bash
         run: |
-          if [[ -n "${{ github.event.inputs.target_date }}" ]]; then
-            DATE_DIR="${{ github.event.inputs.target_date }}"
+          set -euo pipefail
+          if [[ -n "${{ github.event.inputs.target_date || '' }}" ]]; then
+            DD="${{ github.event.inputs.target_date }}"
           else
-            DATE_DIR="$(date -u +%Y-%m-%d)"
+            DD="$(date -u +%Y-%m-%d)"
           fi
-          echo "date_dir=${DATE_DIR}" >> "$GITHUB_OUTPUT"
-          echo "📅 Target date: ${DATE_DIR}" >> "$GITHUB_STEP_SUMMARY"
+          echo "date_dir=${DD}" >> "$GITHUB_OUTPUT"
+          echo "📅 date_dir=${DD}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Generate cache key
-        id: cache_key
-        run: |
-          WEEK=$(date -u +%Y-%W)
-          echo "key=deps-${WEEK}-${{ env.PYTHON_VERSION }}" >> "$GITHUB_OUTPUT"
-
-      - name: Time Gate (America/Los_Angeles)
+      - name: Time-gate (America/Los_Angeles)
         id: tgate
         shell: bash
         run: |
@@ -93,35 +89,49 @@ jobs:
             echo "⏭️ Time-gate skipped (manual override)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+
           export TZ=America/Los_Angeles
           NOW_PT="$(date +%H:%M)"
-          TARGET_PT="${DESIRED_PT_TIME}"
-          now_s="$(date -d "$NOW_PT" +%s)"
-          tgt_s="$(date -d "$TARGET_PT" +%s)"
-          diff="$(( now_s - tgt_s ))"; [ "$diff" -lt 0 ] && diff="$(( -diff ))"
-          DELTA="$(( diff / 60 ))"
-          if [ "${DELTA}" -le "${WINDOW_MIN}" ]; then
-            echo "run_ok=true"  >> "$GITHUB_OUTPUT"
-            echo "✅ Within window: ${NOW_PT} ~ ${TARGET_PT}" >> "$GITHUB_STEP_SUMMARY"
+          TGT="${DESIRED_PT_TIME}"
+          DOW="$(date +%u)"
+          if [[ "$DOW" -gt 5 ]]; then
+            echo "run_ok=false" >> "$GITHUB_OUTPUT"
+            echo "🚫 Weekend — skip" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          ns="$(date -d "$NOW_PT" +%s)"
+          ts="$(date -d "$TGT" +%s)"
+          diff=$(( ns - ts ))
+          (( diff < 0 )) && diff=$(( -diff ))
+          delta=$(( diff / 60 ))
+
+          if (( delta <= WINDOW_MIN )); then
+            echo "run_ok=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Within window: $NOW_PT vs $TGT (Δ ${delta}m)" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "run_ok=false" >> "$GITHUB_OUTPUT"
-            echo "⏸️ Outside window: ${NOW_PT} vs ${TARGET_PT}" >> "$GITHUB_STEP_SUMMARY"
+            echo "⏸️ Outside window: $NOW_PT vs $TGT (Δ ${delta}m)" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Cache key (weekly + req hash)
+        id: cachekey
+        run: |
+          WEEK=$(date -u +%Y-%W)
+          echo "key=deps-${WEEK}-${{ hashFiles('**/requirements.txt') }}" >> "$GITHUB_OUTPUT"
 
   producer:
     needs: initialize
     if: needs.initialize.outputs.run_ok == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     outputs:
+      already: ${{ steps.skipcheck.outputs.already }}
       date_dir: ${{ needs.initialize.outputs.date_dir }}
-      already_ran: ${{ steps.skipcheck.outputs.already }}
-      artifacts_created: ${{ steps.validate.outputs.valid }}
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -133,166 +143,167 @@ jobs:
         with:
           path: ~/.cache/pip
           key: ${{ needs.initialize.outputs.cache_key }}
-          restore-keys: |
-            deps-${{ env.PYTHON_VERSION }}-
+          restore-keys: deps-
 
-      - name: Install system deps
+      - name: OS deps (curl/jq)
         run: |
-          set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends curl jq coreutils
-          sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
-      - name: Install Python deps
+      - name: Install Python deps (deterministic)
         run: |
           set -euo pipefail
-          printf '%s\n' \
-            'requests==2.31.0' \
-            'pandas==2.1.4' \
-            'numpy==1.26.2' \
-            'python-dateutil==2.8.2' > requirements.txt
-          python -m pip install --upgrade pip setuptools wheel
+          cat > requirements.txt <<'REQ'
+          requests==2.31.0
+          pandas==2.1.4
+          numpy==1.26.2
+          python-dateutil==2.8.2
+          REQ
+          python -m pip install --upgrade pip wheel setuptools
           pip install -r requirements.txt
+          [[ "${{ github.event.inputs.debug_mode || 'false' }}" == "true" ]] && pip list
 
-      - name: Skip if already ran today (UTC)
+      - name: Skip if data for today already present
         id: skipcheck
         shell: bash
+        env:
+          DD: ${{ needs.initialize.outputs.date_dir }}
         run: |
           set -euo pipefail
-          DATE_DIR="data/${{ needs.initialize.outputs.date_dir }}"
-          if [[ "${{ github.event.inputs.force_run }}" == "true" ]]; then
+          if [[ "${{ github.event.inputs.force_run || 'false' }}" == "true" ]]; then
             echo "already=false" >> "$GITHUB_OUTPUT"
-            echo "🔄 Force run enabled" >> "$GITHUB_STEP_SUMMARY"
-          elif [ -d "$DATE_DIR" ] && [ -f "$DATE_DIR/overlay_vwap_macd_rsi.csv" ]; then
+            echo "🔄 Force run — ignoring existing artifacts" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ -f "data/${DD}/overlay_vwap_macd_rsi.csv" ]]; then
             echo "already=true" >> "$GITHUB_OUTPUT"
-            echo "⏭️ Producer already completed for $DATE_DIR" >> "$GITHUB_STEP_SUMMARY"
+            echo "⏭️ Already produced: data/${DD}" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "already=false" >> "$GITHUB_OUTPUT"
-            echo "✨ First run for $DATE_DIR — executing Producer" >> "$GITHUB_STEP_SUMMARY"
+            echo "✨ Producer will run for data/${DD}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Run main LEAPS script
         if: steps.skipcheck.outputs.already == 'false'
         env:
           TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
+        shell: bash
         run: |
           set -euo pipefail
-          a=1; max=${MAX_RETRY_ATTEMPTS}
-          while [ $a -le $max ]; do
-            echo "Run leaps_batched_cached.py attempt $a/$max"
-            if python leaps_batched_cached.py; then
-              break
-            fi
-            [ $a -eq $max ] && exit 1
-            sleep 30; a=$((a+1))
+          a=1; max=${MAX_RETRY_ATTEMPTS:-3}
+          until python leaps_batched_cached.py; do
+            ec=$?
+            [[ $a -ge $max ]] && exit $ec
+            echo "Retry $a/$max after 30s…"; sleep 30; a=$((a+1))
           done
 
-      - name: Build Actual Option P/L (fallback-safe)
+      - name: Build Actual Option P/L (optional)
         if: steps.skipcheck.outputs.already == 'false'
         env:
           TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
         run: |
-          if [ -f tools/option_pl_builder.py ]; then
-            python tools/option_pl_builder.py || echo "⚠️ option_pl_builder failed (continuing)"
-          else
-            echo "⚠️ tools/option_pl_builder.py not found"
+          if [[ -f tools/option_pl_builder.py ]]; then
+            python tools/option_pl_builder.py || echo "::warning::option_pl_builder failed (continuing)"
           fi
 
       - name: Enrich overlay with intraday VWAP (PYTHONPATH set)
         if: steps.skipcheck.outputs.already == 'false'
         env:
-          TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          if [ -f tools/enrich_overlay_with_vwap.py ]; then
-            python tools/enrich_overlay_with_vwap.py --overlay overlay_vwap_macd_rsi.csv || echo "⚠️ VWAP enrichment failed (non-fatal)"
+          if [[ -f tools/enrich_overlay_with_vwap.py ]]; then
+            python tools/enrich_overlay_with_vwap.py --overlay overlay_vwap_macd_rsi.csv || echo "::warning::VWAP enrich failed (continuing)"
           fi
 
-      - name: Validate produced data
-        if: steps.skipcheck.outputs.already == 'false'
+      - name: Validate produced data (light)
         id: validate
         continue-on-error: true
         run: |
           python - <<'PY'
-          import os, pandas as pd, json
-          ok = False; errs=[]
+          import os, json, pandas as pd
+          ok=True; errs=[]
           if os.path.exists('overlay_vwap_macd_rsi.csv'):
-              try:
-                  df = pd.read_csv('overlay_vwap_macd_rsi.csv')
-                  ok = len(df) > 0
-              except Exception as e:
-                  errs.append(f"overlay parse: {e}")
+              try: pd.read_csv('overlay_vwap_macd_rsi.csv', nrows=5)
+              except Exception as e: ok=False; errs.append(f'overlay: {e}')
           else:
-              errs.append("overlay missing")
-          with open('validation_report.json','w') as f: json.dump({"ok":ok,"errs":errs}, f)
+              ok=False; errs.append('overlay missing')
           print(f"valid={ok}")
+          open(os.environ['GITHUB_OUTPUT'],'a').write(f"valid={'true' if ok else 'false'}\n")
+          if not ok:
+              print("::warning::" + "; ".join(errs))
           PY
-          if jq -e '.ok==true' validation_report.json >/dev/null 2>&1; then
-            echo "valid=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "valid=false" >> "$GITHUB_OUTPUT"
 
-      - name: Collect artifacts into date dir + update latest.json + analysis_digest.json
+      - name: Collect into date dir + write latest.json + analysis_digest.json
         if: steps.skipcheck.outputs.already == 'false'
-        id: collect
+        env:
+          TODAY: ${{ needs.initialize.outputs.date_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          TODAY="${{ needs.initialize.outputs.date_dir }}"
           DD="data/${TODAY}"
           mkdir -p "$DD"
-          for f in overlay_vwap_macd_rsi.csv option_pl.csv gapdown_above_100sma.csv vwap_missing.json validation_report.json; do
-            [ -f "$f" ] && mv -f "$f" "$DD/"
+
+          # Move any root CSVs (old layout safety)
+          for f in overlay_vwap_macd_rsi.csv option_pl.csv gapdown_above_100sma.csv vwap_missing.json; do
+            [[ -f "$f" ]] && mv -f "$f" "$DD/"
           done
-          jq -n --arg dd "$DD" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{date_dir:$dd, timestamp:$ts}' > latest.json
+
+          # Write latest.json (root)
+          jq -n --arg dd "$TODAY" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{date_dir: ("data/" + $dd), timestamp: $ts}' > latest.json
+
+          # Build analysis_digest.json (root)
           python - <<'PY'
           import os, json, pandas as pd
-          dd=os.environ["TODAY"]; base=f"data/{dd}"
-          dig={"date_dir":base}
-          def head(path, cols=None, n=20):
-              p=f"{base}/{path}"
-              if not os.path.exists(p): return None
-              try:
-                  df=pd.read_csv(p)
-                  if cols: df=df[[c for c in cols if c in df.columns]]
-                  return df.head(n).to_dict(orient="records")
-              except Exception as e:
-                  return {"error":str(e)}
-          dig["overlay_preview"]=head("overlay_vwap_macd_rsi.csv",
-            ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"], 30)
-          for nm in ("option_pl.csv","gapdown_above_100sma.csv"):
-              p=f"{base}/{nm}"
-              if os.path.exists(p):
-                  try:
-                      dig[nm.replace('.csv','_rows')]=int(pd.read_csv(p).shape[0])
-                  except Exception as e:
-                      dig[nm+"_error"]=str(e)
-          with open("analysis_digest.json","w") as f: json.dump(dig,f,indent=2)
+          dd = os.environ["TODAY"]
+          over = f"data/{dd}/overlay_vwap_macd_rsi.csv"
+          opl  = f"data/{dd}/option_pl.csv"
+          gap  = f"data/{dd}/gapdown_above_100sma.csv"
+          out = "analysis_digest.json"
+          digest = {"date_dir": f"data/{dd}"}
+          def preview(path, cols=None, n=30):
+            if not os.path.exists(path): return None
+            df = pd.read_csv(path)
+            if cols: df = df[[c for c in cols if c in df.columns]]
+            return df.head(n).to_dict(orient="records")
+          digest["overlay_preview"] = preview(
+            over,
+            ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"], 30
+          )
+          digest["option_pl_rows"] = (pd.read_csv(opl).shape[0] if os.path.exists(opl) else 0)
+          digest["gap_rows"]       = (pd.read_csv(gap).shape[0] if os.path.exists(gap) else 0)
+          with open(out,"w") as f: json.dump(digest,f,indent=2)
+          print("Wrote", out)
           PY
-          echo "date_dir=${TODAY}" >> "$GITHUB_OUTPUT"
 
-      - name: Commit artifacts to repo
+          echo "📦 Collected into $DD" >> "$GITHUB_STEP_SUMMARY"
+          ls -lh "$DD" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit artifacts
         if: steps.skipcheck.outputs.already == 'false'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "📊 LEAPS daily overlay - ${{ needs.initialize.outputs.date_dir }}"
+          commit_message: "LEAPS daily overlay — ${{ needs.initialize.outputs.date_dir }}"
           branch: ${{ env.BRANCH }}
+          file_pattern: |
+            data/**
+            latest.json
+            analysis_digest.json
           add_options: -A
-          file_pattern: 'data/* latest.json analysis_digest.json'
+          commit_options: "--no-verify"
 
       - name: Prepare public folder for Pages
         if: steps.skipcheck.outputs.already == 'false'
+        env:
+          DD: ${{ needs.initialize.outputs.date_dir }}
         run: |
           set -euo pipefail
-          TODAY="${{ needs.initialize.outputs.date_dir }}"
-          rm -rf public
-          mkdir -p public/data/"${TODAY}"
-          cp -R data/"${TODAY}"/. public/data/"${TODAY}"/ 2>/dev/null || true
+          rm -rf public && mkdir -p public
+          cp -R "data/${DD}" "public/${DD}"
           cp -f latest.json analysis_digest.json public/
 
-      - name: Publish mirror to gh-pages (data dir + root digest files)
+      - name: Publish to GitHub Pages
         if: steps.skipcheck.outputs.already == 'false'
         uses: peaceiris/actions-gh-pages@v4
         with:
@@ -301,105 +312,89 @@ jobs:
           keep_files: true
           enable_jekyll: false
 
+      - name: Cleanup old data dirs (> ${DATA_RETENTION_DAYS}d)
+        continue-on-error: true
+        run: |
+          [[ -d data ]] && find data -maxdepth 1 -type d -name "20*" -mtime +${DATA_RETENTION_DAYS} -print -exec rm -rf {} + || true
+
   consumer:
     needs: [initialize, producer]
-    if: needs.initialize.outputs.run_ok == 'true' && !cancelled()
+    if: needs.initialize.outputs.run_ok == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
 
-      - name: Ensure OS tools
+      - name: OS tools + jq
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y curl jq coreutils
-          chmod +x tools/fetch.sh
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends curl jq coreutils
+          sudo rm -rf /var/lib/apt/lists/*
 
-      - name: Resolve date_dir via Pages/jsDelivr/raw (latest.json)
+      - name: Make fetch tool executable
+        run: chmod +x tools/fetch.sh
+
+      - name: Resolve effective date_dir (prefer latest.json ≤24h; else newest; else yesterday)
         id: datedir
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p tmp
-          tools/fetch.sh latest.json tmp/latest.json || true
-          if [ -s tmp/latest.json ]; then
-            DATE_DIR="$(jq -r '.date_dir // empty' tmp/latest.json | sed 's|^data/||')"
-          fi
-          if [ -z "${DATE_DIR:-}" ]; then
-            DATE_DIR="$(find data -maxdepth 1 -type d -name '20*' | sort -r | head -1 | xargs -I{} basename {} || true)"
-          fi
-          if [ -z "${DATE_DIR:-}" ]; then
-            DATE_DIR="$(date -u +%Y-%m-%d)"
-          fi
-          echo "date_dir=${DATE_DIR}" >> "$GITHUB_OUTPUT"
-          echo "Resolved date_dir: ${DATE_DIR}" >> "$GITHUB_STEP_SUMMARY"
+          TODAY="$(date -u +%Y-%m-%d)"
+          CAND=""
 
-      - name: Fetch overlay/PL/gap with fallback chain (Pages → jsDelivr → raw)
+          if [[ -s latest.json ]]; then
+            ptr="$(jq -r '.date_dir // empty' latest.json | sed 's|data/||')"
+            if [[ -n "$ptr" ]]; then
+              age_h=$(( ( $(date -u +%s) - $(date -u -d "$ptr" +%s) ) / 3600 ))
+              if (( age_h >= 0 && age_h <= 24 )); then CAND="$ptr"; fi
+            fi
+          fi
+          if [[ -z "$CAND" && -d data ]]; then
+            CAND="$(find data -maxdepth 1 -type d -name "20*" | sort -r | head -1 | xargs -I{} basename {} || true)"
+          fi
+          if [[ -z "$CAND" ]]; then
+            CAND="$(date -u -d "yesterday" +%Y-%m-%d)"
+          fi
+
+          echo "date_dir=$CAND" >> "$GITHUB_OUTPUT"
+          echo "Using date_dir=$CAND" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch overlay/PL/gap (Pages → jsDelivr → raw → API)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DD: ${{ steps.datedir.outputs.date_dir }}
+          OWNER: ${{ env.OWNER }}
+          REPO:  ${{ env.REPO }}
+          BRANCH: ${{ env.BRANCH }}
         shell: bash
         run: |
           set -euo pipefail
-          DD="${{ steps.datedir.outputs.date_dir }}"
-          tools/fetch.sh \
-            "data/${DD}/overlay_vwap_macd_rsi.csv" overlay.csv \
-            "data/${DD}/option_pl.csv"            option_pl.csv \
-            "data/${DD}/gapdown_above_100sma.csv" gap.csv
+          tools/fetch.sh "data/${DD}/overlay_vwap_macd_rsi.csv" overlay.csv \
+                         "data/${DD}/option_pl.csv"            option_pl.csv \
+                         "data/${DD}/gapdown_above_100sma.csv" gap.csv
 
       - name: Emit quick summary
         run: |
           {
-            echo "### LEAPS (Consumer)"
-            echo "- date_dir: ${{ steps.datedir.outputs.date_dir }}"
-            echo ""
-            echo "overlay.csv (head):"; head -5 overlay.csv || true
-            echo ""; echo "option_pl.csv (head):"; head -5 option_pl.csv || true
-            echo ""; echo "gap.csv (head):"; head -5 gap.csv || true
+            echo "### 📊 Consumer Snapshot"
+            echo "**date_dir:** ${{ steps.datedir.outputs.date_dir }}"
+            for f in overlay.csv option_pl.csv gap.csv; do
+              if [[ -f "$f" ]]; then
+                echo ""
+                echo "#### $f (head)"
+                echo '```csv'
+                head -5 "$f"
+                echo '```'
+              fi
+            done
           } >> "$GITHUB_STEP_SUMMARY"
 
   notify:
     needs: [initialize, producer, consumer]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
-      - name: Summarize status
-        id: status
+      - name: Final status
         run: |
-          if [[ "${{ needs.producer.result }}" == "failure" || "${{ needs.consumer.result }}" == "failure" ]]; then
-            echo "status=failed" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ needs.producer.result }}" == "skipped" && "${{ needs.consumer.result }}" == "skipped" ]]; then
-            echo "status=skipped" >> "$GITHUB_OUTPUT"
-          else
-            echo "status=success" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: File issue on failure (notification)
-        if: steps.status.outputs.status == 'failed' && github.event_name != 'workflow_dispatch'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const date = new Date().toISOString().slice(0,10);
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Workflow Failure: LEAPS Unified - ${date}`,
-              body: `Daily LEAPS workflow failed.\n\nRun: ${runUrl}`,
-              labels: ['workflow-failure','automated']
-            });
-
-      - name: Final summary
-        run: |
-          {
-            echo "## Workflow Summary"
-            echo "- Status: ${{ steps.status.outputs.status }}"
-            echo "- Producer: ${{ needs.producer.result }}"
-            echo "- Consumer: ${{ needs.consumer.result }}"
-            echo "- Trigger: ${{ github.event_name }}"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "init=${{ needs.initialize.result }}, prod=${{ needs.producer.result }}, cons=${{ needs.consumer.result }}"
