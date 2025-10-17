@@ -1,167 +1,167 @@
 {
-  "date_dir": "data/2025-10-16",
-  "generated_utc": "2025-10-16T21:37:29.269676Z",
-  "workflow_run": "18575489569",
+  "date_dir": "data/2025-10-17",
+  "generated_utc": "2025-10-17T17:53:51.235640Z",
+  "workflow_run": "18600700065",
   "files": {
     "overlay": {
       "status": "ok",
       "rows": 14,
       "columns": 10,
-      "size_bytes": 865,
+      "size_bytes": 874,
       "preview": [
         {
           "Ticker": "AMD",
-          "RSI14": 77.89,
+          "RSI14": 75.83,
           "MACD>Signal": true,
           "VWAP": NaN,
-          "LastPx": 234.56,
+          "LastPx": 231.4645,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 158.1647,
-          "Gap%": -0.97,
-          "Guidance": "HOLD"
+          "SMA100": 159.3341,
+          "Gap%": -0.55,
+          "Guidance": "TRIM"
         },
         {
           "Ticker": "ASTS",
-          "RSI14": 82.17,
+          "RSI14": 75.79,
           "MACD>Signal": true,
           "VWAP": NaN,
-          "LastPx": 89.5,
+          "LastPx": 83.96,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 49.3419,
-          "Gap%": -0.72,
-          "Guidance": "HOLD"
+          "SMA100": 49.9331,
+          "Gap%": -6.85,
+          "Guidance": "TRIM"
         },
         {
           "Ticker": "BBAI",
-          "RSI14": 58.93,
-          "MACD>Signal": true,
+          "RSI14": 55.75,
+          "MACD>Signal": false,
           "VWAP": NaN,
-          "LastPx": 7.7,
+          "LastPx": 7.1197,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 6.0618,
-          "Gap%": 0.94,
-          "Guidance": "HOLD"
+          "SMA100": 6.0881,
+          "Gap%": -2.6,
+          "Guidance": "TRIM"
         },
         {
           "Ticker": "META",
-          "RSI14": 38.75,
+          "RSI14": 39.67,
           "MACD>Signal": false,
           "VWAP": NaN,
-          "LastPx": 712.07,
+          "LastPx": 713.785,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 727.7643,
-          "Gap%": 0.0,
+          "SMA100": 728.4811,
+          "Gap%": -0.7,
           "Guidance": "HOLD"
         },
         {
           "Ticker": "MSFT",
-          "RSI14": 50.15,
+          "RSI14": 48.03,
           "MACD>Signal": false,
           "VWAP": NaN,
-          "LastPx": 511.61,
+          "LastPx": 512.7,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 502.7273,
-          "Gap%": -0.17,
+          "SMA100": 503.2475,
+          "Gap%": -0.5,
           "Guidance": "HOLD"
         },
         {
           "Ticker": "MSTR",
-          "RSI14": 42.24,
+          "RSI14": 37.76,
           "MACD>Signal": false,
           "VWAP": NaN,
-          "LastPx": 283.84,
+          "LastPx": 289.5,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 367.2147,
-          "Gap%": 1.06,
+          "SMA100": 366.3877,
+          "Gap%": -1.61,
           "Guidance": "HOLD"
         },
         {
           "Ticker": "MSTU",
-          "RSI14": 40.65,
+          "RSI14": 35.81,
           "MACD>Signal": false,
           "VWAP": NaN,
-          "LastPx": 3.48,
+          "LastPx": 3.6,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 6.7992,
-          "Gap%": 2.37,
+          "SMA100": 6.7588,
+          "Gap%": -3.74,
           "Guidance": "HOLD"
         },
         {
           "Ticker": "NVDA",
-          "RSI14": 53.84,
+          "RSI14": 50.98,
           "MACD>Signal": false,
           "VWAP": NaN,
-          "LastPx": 181.81,
+          "LastPx": 182.715,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 168.4342,
-          "Gap%": 1.33,
+          "SMA100": 168.9064,
+          "Gap%": -0.9,
           "Guidance": "HOLD"
         },
         {
           "Ticker": "PLTR",
-          "RSI14": 50.53,
+          "RSI14": 49.21,
           "MACD>Signal": false,
           "VWAP": NaN,
-          "LastPx": 178.12,
+          "LastPx": 178.1295,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 157.5042,
-          "Gap%": 1.2,
+          "SMA100": 158.0509,
+          "Gap%": -0.21,
           "Guidance": "HOLD"
         },
         {
           "Ticker": "QQQ",
-          "RSI14": 52.8,
+          "RSI14": 52.54,
           "MACD>Signal": false,
           "VWAP": NaN,
-          "LastPx": 599.99,
+          "LastPx": 602.3244,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 566.3537,
-          "Gap%": 0.48,
+          "SMA100": 567.1651,
+          "Gap%": -0.34,
           "Guidance": "HOLD"
         },
         {
           "Ticker": "RDDT",
-          "RSI14": 29.41,
+          "RSI14": 26.19,
           "MACD>Signal": false,
           "VWAP": NaN,
-          "LastPx": 198.97,
+          "LastPx": 191.9325,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 184.7906,
-          "Gap%": 0.89,
-          "Guidance": "HOLD"
+          "SMA100": 185.6637,
+          "Gap%": -1.91,
+          "Guidance": "EXIT"
         },
         {
           "Ticker": "RKLB",
-          "RSI14": 85.03,
+          "RSI14": 79.05,
           "MACD>Signal": true,
           "VWAP": NaN,
-          "LastPx": 67.0,
+          "LastPx": 64.95,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 43.4544,
-          "Gap%": 1.15,
-          "Guidance": "HOLD"
+          "SMA100": 43.8164,
+          "Gap%": -1.66,
+          "Guidance": "TRIM"
         },
         {
           "Ticker": "UUUU",
-          "RSI14": 64.33,
+          "RSI14": 60.86,
           "MACD>Signal": true,
           "VWAP": NaN,
-          "LastPx": 21.69,
+          "LastPx": 20.5,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 10.5003,
-          "Gap%": -0.28,
-          "Guidance": "HOLD"
+          "SMA100": 10.6509,
+          "Gap%": -10.07,
+          "Guidance": "TRIM"
         },
         {
           "Ticker": "VST",
-          "RSI14": 52.37,
+          "RSI14": 53.98,
           "MACD>Signal": true,
           "VWAP": NaN,
-          "LastPx": 210.4,
+          "LastPx": 203.12,
           "Px_vs_VWAP": "Unknown",
-          "SMA100": 193.514,
-          "Gap%": 1.87,
-          "Guidance": "HOLD"
+          "SMA100": 193.9066,
+          "Gap%": -1.3,
+          "Guidance": "TRIM"
         }
       ]
     },
@@ -173,9 +173,9 @@
     },
     "gap": {
       "status": "ok",
-      "rows": 0,
+      "rows": 6,
       "columns": 4,
-      "size_bytes": 25
+      "size_bytes": 211
     }
   }
 }
