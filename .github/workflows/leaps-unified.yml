@@ -163,12 +163,12 @@ jobs:
       
     steps:
       - name: Checkout repo
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493  # v4.1.1
         with:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c  # v5.0.0
+        uses: actions/setup-python@bba65e51ff35d50c6dbaaacd8a4681db13aa7cb4  # v5.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -490,7 +490,7 @@ jobs:
 
       - name: Commit artifacts to repository
         if: steps.skip.outputs.already == 'false'
-        uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842  # v5.0.0
+        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3  # v5.0.0
         with:
           commit_message: "LEAPS: artifacts for ${{ steps.collect.outputs.date_dir }}"
           branch: ${{ env.BRANCH }}
@@ -553,7 +553,7 @@ jobs:
 
       - name: Deploy to GitHub Pages
         if: steps.skip.outputs.already == 'false'
-        uses: peaceiris/actions-gh-pages@373f7f263a76c20808c831209c920827a82a2847  # v4.0.0
+        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e  # v4.0.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: pages_pub
@@ -585,7 +585,7 @@ jobs:
       
     steps:
       - name: Checkout repository
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493  # v4.1.1
 
       - name: Install system dependencies
         run: |
