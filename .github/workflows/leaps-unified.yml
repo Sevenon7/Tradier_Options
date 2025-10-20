@@ -365,24 +365,29 @@ jobs:
         id: datedir
         run: |
           set -euo pipefail
-          TODAY="$(date -u +%Y-%m-%d)"; CAND=""
+          TODAY="$(date -u +%Y-%m-%d)"
+          CAND=""
           if [ -s latest.json ]; then
-            ptr="$(jq -r '.date_dir // empty' latest.json | sed 's|^data/||')"
-            if echo "$ptr" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
-              python3 - <<PY > tmp_dd.txt
-              import os,datetime
-              t=datetime.datetime.strptime(os.environ["TODAY"],"%Y-%m-%d")
-              p=datetime.datetime.strptime("${ptr}","%Y-%m-%d")
-              print("${ptr}" if 0 <= (t-p).total_seconds()/3600.0 <= 24 else "")
-              PY
-              CAND="$(cat tmp_dd.txt 2>/dev/null || true)"; rm -f tmp_dd.txt || true
+            PTR="$(jq -r '.date_dir // empty' latest.json | sed 's|^data/||')"
+            if echo "${PTR}" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+              PTR_OK="$(TODAY="${TODAY}" PTR="${PTR}" python3 -c "import os,datetime; t=datetime.datetime.strptime(os.environ['TODAY'],'%Y-%m-%d'); p=datetime.datetime.strptime(os.environ['PTR'],'%Y-%m-%d'); print(os.environ['PTR'] if 0 <= (t-p).total_seconds()/3600.0 <= 24 else '')" 2>/dev/null || true)"
+              if [ -n "${PTR_OK}" ]; then
+                CAND="${PTR_OK}"
+                echo "📌 Using latest.json pointer: ${CAND}" >> "$GITHUB_STEP_SUMMARY"
+              fi
             fi
           fi
-          if [ -z "$CAND" ] && [ -d data ]; then
+          if [ -z "${CAND}" ] && [ -d data ]; then
             CAND="$(find data -maxdepth 1 -type d -name '20*' -printf '%f\n' | sort | tail -1 || true)"
+            [ -n "${CAND}" ] && echo "📁 Using newest directory: ${CAND}" >> "$GITHUB_STEP_SUMMARY"
           fi
-          [ -z "$CAND" ] && CAND="$(date -u -d 'yesterday' +%Y-%m-%d)"
+          [ -z "${CAND}" ] && CAND="$(date -u -d 'yesterday' +%Y-%m-%d)"
           echo "date_dir=${CAND}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 📅 Consumer Date Resolution"
+            echo "- Selected Date: \`${CAND}\`"
+            echo "- Today (UTC): \`${TODAY}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fetch overlay/PL/gap with fallback chain (Pages → jsDelivr → raw → API)
         env:
