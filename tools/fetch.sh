@@ -1,93 +1,138 @@
 #!/usr/bin/env bash
-# fetch.sh — resilient fetcher with layered fallbacks & backoff
-# Usage: tools/fetch.sh <remote_path> <local_out> [<remote_path> <local_out> ...]
+# tools/fetch.sh
+# Fetch repo files with fallback chain: Pages → jsDelivr → raw → API(raw)
+# Usage: fetch.sh <src1> <dest1> [<src2> <dest2> ...]
+#   srcN  = path in repo (e.g., latest.json or data/YYYY-MM-DD/overlay_vwap_macd_rsi.csv)
+#   destN = local path to write
 
 set -euo pipefail
 
 OWNER="${OWNER:-Sevenon7}"
-REPO="${REPO:-Sevenon7/Tradier_Options}"
+REPO="${REPO:-Tradier_Options}"
 BRANCH="${BRANCH:-main}"
-TOKEN="${GITHUB_TOKEN:-${TOKEN:-}}"
+GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
-ua="leaps-unified-fetcher/1.0 (+github actions)"
-auth_hdr=()
-[[ -n "$TOKEN" ]] && auth_hdr=(-H "Authorization: Bearer ${TOKEN}")
+UA="LEAPS-Automation/1.0 (+https://github.com/${OWNER}/${REPO})"
 
-curl_get() {
-  # $1=url  $2=outfile
-  local url="$1" out="$2"
-  local attempt=1 max=4
-  while :; do
-    set +e
-    http=$(curl -sS -L -w "%{http_code}" -o "${out}.part" \
-      -H "User-Agent: ${ua}" \
-      -H "Accept: */*" \
-      "${auth_hdr[@]}" \
-      "$url")
-    rc=$?
-    set -e
-    if [[ $rc -eq 0 && "$http" =~ ^2 ]]; then
-      mv "${out}.part" "$out"
-      return 0
+log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
+
+usage() {
+  cat >&2 <<USAGE
+Usage: $0 <src1> <dest1> [<src2> <dest2> ...]
+  srcN:  repo path (e.g., latest.json, data/YYYY-MM-DD/overlay_vwap_macd_rsi.csv)
+  destN: local destination path
+Env:
+  OWNER=${OWNER}  REPO=${REPO}  BRANCH=${BRANCH}
+  GITHUB_TOKEN: optional; used only for raw.githubusercontent.com and api.github.com
+USAGE
+  exit 2
+}
+
+# curl with backoff; set auth headers only for github domains
+curl_dl() {
+  local url="$1" dest="$2" max=3 attempt=1
+  local tmp="${dest}.tmp"
+  local extra=()
+
+  case "$url" in
+    https://raw.githubusercontent.com/*|https://api.github.com/*)
+      [[ -n "$GITHUB_TOKEN" ]] && extra+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+      ;;
+    https://*.github.io/*|https://cdn.jsdelivr.net/*)
+      # never send tokens to these hosts
+      :
+      ;;
+  esac
+
+  while (( attempt <= max )); do
+    log "GET ($attempt/$max): $url"
+    if curl -fL --retry 0 --connect-timeout 10 --max-time 60 \
+            -A "${UA}" "${extra[@]}" -o "${tmp}" "$url"; then
+      # Accept only non-empty content
+      if [[ -s "${tmp}" ]]; then
+        # Guard against HTML "soft 200" pages
+        if head -c 256 "${tmp}" | tr -d '\r' | grep -qiE '^<!doctype html|^<html|rate limit exceeded|not found|error'; then
+          log "⚠️  Discarding HTML/error payload from ${url}"
+          rm -f "${tmp}"
+        else
+          mv -f "${tmp}" "${dest}"
+          return 0
+        fi
+      else
+        log "⚠️  Empty body from ${url}"
+        rm -f "${tmp}"
+      fi
+    else
+      rc=$?
+      log "⚠️  curl failed (rc=$rc) for ${url}"
+      rm -f "${tmp}" || true
     fi
-    rm -f "${out}.part" || true
-    if (( attempt >= max )); then
-      return 22
-    fi
-    sleep $(( 2 ** attempt ))
+
+    # backoff: 1s, 3s, 5s
+    sleep $(( (attempt-1)*2 + 1 ))
     attempt=$(( attempt + 1 ))
   done
+  return 1
 }
 
+# Try each mirror in order for a single file
 fetch_one() {
-  local path="$1" out="$2"
+  local path="$1" dest="$2"
+  mkdir -p "$(dirname "$dest")"
 
-  # 0) local file present?
-  if [[ -f "$path" ]]; then
-    cp -f "$path" "$out" && return 0
+  # Mirrors (order matters)
+  local pages="https://${OWNER}.github.io/${REPO}/${path}"
+  local jsdeliv="https://cdn.jsdelivr.net/gh/${OWNER}/${REPO}@${BRANCH}/${path}"
+  local raw="https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${path}"
+  local api="https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}?ref=${BRANCH}"
+
+  # 1) GitHub Pages
+  if curl_dl "${pages}" "${dest}"; then
+    log "✅ ${dest} ← GitHub Pages"
+    return 0
   fi
-
-  # Base URLs
-  local pages="https://${OWNER}.github.io/${REPO#*/}/${path}"
-  local jsd="https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}/${path}"
-  local raw="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${path}"
-  local api="https://api.github.com/repos/${REPO}/contents/${path}?ref=${BRANCH}"
-
-  # 1) Pages
-  if curl_get "$pages" "$out"; then return 0; fi
-  echo "MISS (pages): $path" 1>&2
 
   # 2) jsDelivr
-  if curl_get "$jsd" "$out"; then return 0; fi
-  echo "MISS (jsDelivr): $path" 1>&2
-
-  # 3) raw
-  if curl_get "$raw" "$out"; then return 0; fi
-  echo "MISS (raw): $path" 1>&2
-
-  # 4) API (base64 decode)
-  tmp="$(mktemp)"
-  if curl_get "$api" "$tmp"; then
-    if command -v jq >/dev/null 2>&1; then
-      jq -r '.content' "$tmp" | tr -d '\n' | base64 --decode > "$out" || true
-      rm -f "$tmp"
-      [[ -s "$out" ]] && return 0
-    fi
-    rm -f "$tmp"
+  if curl_dl "${jsdeliv}" "${dest}"; then
+    log "✅ ${dest} ← jsDelivr"
+    return 0
   fi
 
-  echo "::error ::fetch failed for ${path} (all fallbacks exhausted)"
-  return 22
+  # 3) raw.githubusercontent.com
+  if curl_dl "${raw}" "${dest}"; then
+    log "✅ ${dest} ← raw.githubusercontent.com"
+    return 0
+  fi
+
+  # 4) GitHub API (raw)
+  if [[ -n "$GITHUB_TOKEN" ]]; then
+    log "GET (API raw): ${api}"
+    if curl -fL -A "${UA}" \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github.raw" \
+          -o "${dest}.tmp" "${api}" && [[ -s "${dest}.tmp" ]]; then
+      mv -f "${dest}.tmp" "${dest}"
+      log "✅ ${dest} ← api.github.com (raw)"
+      return 0
+    else
+      rm -f "${dest}.tmp" || true
+    fi
+  else
+    log "ℹ️  Skipping API fallback (no GITHUB_TOKEN set)"
+  fi
+
+  log "❌ Failed to fetch ${path}"
+  return 1
 }
 
-# ---- main ----
-if (( $# < 2 || ($# % 2) != 0 )); then
-  echo "Usage: $0 <remote_path> <local_out> [<remote_path> <local_out> ...]" 1>&2
-  exit 64
-fi
+# ---- Main ----
+(( $# == 0 || ($# % 2) != 0 )) && usage
 
+status=0
 while (( $# )); do
-  rp="$1"; shift
-  out="$1"; shift
-  fetch_one "$rp" "$out"
+  src="$1"; dst="$2"; shift 2
+  if ! fetch_one "$src" "$dst"; then
+    status=1
+  fi
 done
+exit $status
