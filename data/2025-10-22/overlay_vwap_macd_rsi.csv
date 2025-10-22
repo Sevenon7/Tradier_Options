@@ -1,0 +1,15 @@
+Ticker,RSI14,MACD>Signal,VWAP,LastPx,Px_vs_VWAP,SMA100,Gap%,Guidance,MarketOpen
+AMD,68.6,True,,225.0864,Unknown,163.0205,-0.5,TRIM,True
+ASTS,50.48,False,,66.815,Unknown,51.4965,-8.34,TRIM,True
+BBAI,43.01,False,,6.4758,Unknown,6.1796,-3.81,EXIT,True
+META,49.13,True,,724.71,Unknown,731.0506,0.08,TRIM,True
+MSFT,52.41,False,,517.86,Unknown,505.0153,0.67,TRIM,True
+MSTR,25.72,False,,278.49,Unknown,364.1205,-2.94,EXIT,True
+MSTU,22.18,False,,3.3,Unknown,6.6454,-5.14,EXIT,True
+NVDA,36.47,False,,176.98,Unknown,170.2277,-0.01,EXIT,True
+PLTR,35.2,False,,170.0905,Unknown,159.6051,0.23,EXIT,True
+QQQ,46.59,False,,599.94,Unknown,569.8297,-0.09,TRIM,True
+RDDT,45.12,False,,192.64,Unknown,188.4341,-0.82,TRIM,True
+RKLB,59.27,False,,58.745,Unknown,44.9138,-3.72,TRIM,True
+UUUU,61.73,False,,21.36,Unknown,11.1498,-8.43,HOLD,True
+VST,36.95,False,,182.59,Unknown,194.6958,0.55,EXIT,True
