@@ -1,9 +1,8 @@
 name: LEAPS Unified (produce + consume)
 
 on:
-  # Single daily schedule in UTC. Time gate handles PDT/PST offset with a wide window.
   schedule:
-    - cron: "50 17,18 * * 1-5"
+    - cron: "50 18 * * 1-5"     # single UTC schedule; time gate handles PDT/PST
   workflow_dispatch:
     inputs:
       skip_time_gate:
@@ -11,13 +10,13 @@ on:
         required: false
         default: "false"
         type: choice
-        options: ["false", "true"]
+        options: ["false","true"]
       force_run:
         description: "Force producer even if today's data exists"
         required: false
         default: "false"
         type: choice
-        options: ["false", "true"]
+        options: ["false","true"]
       target_date:
         description: "Target YYYY-MM-DD (optional)"
         required: false
@@ -31,11 +30,10 @@ permissions:
   contents: read
 
 env:
-  WF_VERSION: "1.0.0"
-  WF_OWNER_REPO: "Sevenon7/Tradier_Options"
+  WF_VERSION: "1.0.1"
   PYTHON_VERSION: "3.11"
   DESIRED_PT_TIME: "10:50"
-  WINDOW_MIN: "95"           # single-UTC schedule; widen window to cover PDT/PST safely
+  WINDOW_MIN: "95"                # wide gate for both PST/PDT
   DATA_RETENTION_DAYS: "30"
 
 defaults:
@@ -47,13 +45,13 @@ jobs:
   # 1) INIT / TIME GATE
   # ============================================
   init-time-gate:
-    if: github.repository == env.WF_OWNER_REPO
+    if: ${{ github.repository == 'Sevenon7/Tradier_Options' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       run_ok: ${{ steps.tgate.outputs.run_ok }}
       date_utc: ${{ steps.setdate.outputs.date_utc }}
-      date_pt: ${{ steps.setdate.outputs.date_pt }}
+      date_pt:  ${{ steps.setdate.outputs.date_pt }}
     steps:
       - name: Validate required secrets
         run: |
@@ -72,7 +70,7 @@ jobs:
           fi
           TZ=America/Los_Angeles DP="$(date +%Y-%m-%d)"
           echo "date_utc=$DU" >> "$GITHUB_OUTPUT"
-          echo "date_pt=$DP"  >> "$GITHUB_OUTPUT"
+          echo "date_pt=$DP"   >> "$GITHUB_OUTPUT"
           {
             echo "### 🚀 Init"
             echo "- UTC date: \`$DU\`"
@@ -88,23 +86,19 @@ jobs:
             echo "⏭️ Time gate skipped (manual override)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-
           export TZ=America/Los_Angeles
           NOW_PT="$(date +%H:%M)"
           TGT_PT="${DESIRED_PT_TIME}"
-          DOW="$(date +%u)"  # 1..7
-
+          DOW="$(date +%u)"
           if [[ "$DOW" -gt 5 ]]; then
             echo "run_ok=false" >> "$GITHUB_OUTPUT"
             echo "⏸️ Weekend; skipping" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-
           now_s="$(date -d "$NOW_PT" +%s)"
           tgt_s="$(date -d "$TGT_PT" +%s)"
           diff="$(( now_s - tgt_s ))"; [[ $diff -lt 0 ]] && diff=$((-diff))
           delta="$(( diff / 60 ))"
-
           if [[ "$delta" -le "$WINDOW_MIN" ]]; then
             echo "run_ok=true"  >> "$GITHUB_OUTPUT"
             echo "✅ Within window ($delta min)" >> "$GITHUB_STEP_SUMMARY"
@@ -125,7 +119,7 @@ jobs:
       contents: write
     outputs:
       produced_dir: ${{ steps.move.outputs.dir }}
-      already: ${{ steps.skip.outputs.already }}
+      already:      ${{ steps.skip.outputs.already }}
     steps:
       - name: Checkout
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
@@ -214,21 +208,6 @@ jobs:
               echo "::warning::VWAP enrichment failed (non-blocking)"
           fi
 
-      - name: Validate produced files (soft)
-        if: steps.skip.outputs.already == 'false'
-        continue-on-error: true
-        run: |
-          python - <<'PY'
-          import os, pandas as pd
-          for f in ("overlay_vwap_macd_rsi.csv","option_pl.csv","gapdown_above_100sma.csv"):
-              if os.path.exists(f):
-                  try:
-                      df = pd.read_csv(f)
-                      print(f"OK {f}: {len(df)} rows")
-                  except Exception as e:
-                      print(f"::warning::{f} failed to read: {e}")
-          PY
-
       - name: Move artifacts into date dir
         id: move
         run: |
@@ -247,8 +226,7 @@ jobs:
         if: steps.skip.outputs.already == 'false'
         uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842
         with:
-          commit_message: "LEAPS: data ${{
-            needs.init-time-gate.outputs.date_pt }} (WF v${{ env.WF_VERSION }})"
+          commit_message: "LEAPS: data ${{ needs.init-time-gate.outputs.date_pt }} (WF v${{ env.WF_VERSION }})"
           add_options: -A
           file_pattern: |
             data/${{ steps.move.outputs.dir }}/*
@@ -263,6 +241,8 @@ jobs:
     permissions:
       contents: write
       pages: write
+    outputs:
+      dir: ${{ steps.eff.outputs.dir }}
     steps:
       - name: Checkout
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
@@ -273,7 +253,6 @@ jobs:
           set -euo pipefail
           CAND="${{ needs.producer.outputs.produced_dir || needs.init-time-gate.outputs.date_pt }}"
           if [[ ! -d "data/${CAND}" ]]; then
-            # fallback to newest existing dir
             CAND="$(find data -maxdepth 1 -type d -name "20*" -printf '%f\n' | sort | tail -1)"
           fi
           [[ -z "$CAND" ]] && { echo "::error::no data directory found"; exit 1; }
@@ -281,19 +260,21 @@ jobs:
           echo "✅ Effective dir: data/$CAND" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build latest.json + analysis_digest.json
+        env:
+          DDIR: ${{ steps.eff.outputs.dir }}
         run: |
           set -euo pipefail
-          DD="${{ steps.eff.outputs.dir }}"
           jq -n \
-            --arg dd "data/${DD}" \
+            --arg dd "data/${DDIR}" \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{date_dir:$dd,generated_utc:$ts}' > latest.json
 
           python - <<'PY'
           import os, json, pandas as pd
-          dd = os.getenv("DDIR")
+          dd = os.environ["DDIR"]
           base = f"data/{dd}"
           digest = {"date_dir": base, "files": {}}
+
           def meta(name, cols=None, n=30):
               p = f"{base}/{name}"
               if not os.path.exists(p): return {"status":"missing"}
@@ -302,18 +283,19 @@ jobs:
                   out = {"status":"ok","rows":int(df.shape[0]),"columns":int(df.shape[1])}
                   if cols:
                       cols=[c for c in cols if c in df.columns]
-                      out["preview"]=df[cols].head(n).to_dict(orient="records")
+                      if cols:
+                          out["preview"]=df[cols].head(n).to_dict(orient="records")
                   return out
               except Exception as e:
                   return {"status":"error","error":str(e)}
+
           digest["files"]["overlay"]=meta("overlay_vwap_macd_rsi.csv",
-            ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"])
+              ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"])
           digest["files"]["option_pl"]=meta("option_pl.csv")
           digest["files"]["gap"]=meta("gapdown_above_100sma.csv")
+
           with open("analysis_digest.json","w") as f: json.dump(digest,f,indent=2)
           PY
-        env:
-          DDIR: ${{ steps.eff.outputs.dir }}
 
       - name: Commit pointers + digest
         uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842
@@ -344,7 +326,7 @@ jobs:
           enable_jekyll: false
 
   # ============================================
-  # 4) CONSUMER (optional local fetch & summary)
+  # 4) CONSUMER (optional summary)
   # ============================================
   consumer:
     needs: [init-time-gate, publish]
@@ -355,7 +337,7 @@ jobs:
       - name: Quick summary
         run: |
           echo "### Consumer summary" >> "$GITHUB_STEP_SUMMARY"
-          ls -lh data/${{ needs.publish.outputs.dir || needs.init-time-gate.outputs.date_pt }} || true
+          ls -lh "data/${{ needs.publish.outputs.dir }}" || true
 
   # ============================================
   # 5) NOTIFY
