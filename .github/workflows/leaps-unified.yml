@@ -122,7 +122,7 @@ jobs:
       already:      ${{ steps.skip.outputs.already }}
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
         with:
           fetch-depth: 0
 
@@ -135,7 +135,7 @@ jobs:
           sudo rm -rf /var/lib/apt/lists/*
 
       - name: Setup Python
-        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c
+        uses: actions/setup-python@cfd55ca82492758d853442341ad4d8010466803a
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -224,7 +224,7 @@ jobs:
 
       - name: Commit artifacts (data only)
         if: steps.skip.outputs.already == 'false'
-        uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842
+        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3
         with:
           commit_message: "LEAPS: data ${{ needs.init-time-gate.outputs.date_pt }} (WF v${{ env.WF_VERSION }})"
           add_options: -A
@@ -245,7 +245,7 @@ jobs:
       dir: ${{ steps.eff.outputs.dir }}
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Determine effective dir
         id: eff
@@ -298,7 +298,7 @@ jobs:
           PY
 
       - name: Commit pointers + digest
-        uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842
+        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3
         with:
           commit_message: "LEAPS: refresh pointers & digest (data/${{ steps.eff.outputs.dir }})"
           add_options: -A
@@ -318,7 +318,7 @@ jobs:
           <li><a href='analysis_digest.json'>analysis_digest.json</a></li></ul>" > pages_pub/index.html
 
       - name: Publish to GitHub Pages
-        uses: peaceiris/actions-gh-pages@373f7f263a76c20808c831209c920827a82a2847
+        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: pages_pub
@@ -333,7 +333,7 @@ jobs:
     if: needs.init-time-gate.outputs.run_ok == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+      - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
       - name: Quick summary
         run: |
           echo "### Consumer summary" >> "$GITHUB_STEP_SUMMARY"
