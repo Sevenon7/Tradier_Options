@@ -31,8 +31,8 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.11"
-  DESIRED_PT_TIME: "10:50"     # local PT fire time
-  WINDOW_MIN: "95"             # ± minutes guard window
+  DESIRED_PT_TIME: "10:50"
+  WINDOW_MIN: "95"
   REPO: "Sevenon7/Tradier_Options"
   BRANCH: "main"
   OWNER: "Sevenon7"
@@ -43,9 +43,6 @@ defaults:
     shell: bash
 
 jobs:
-  # ---------------------------
-  # 1) TIME GATE / INIT
-  # ---------------------------
   init-time-gate:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -89,7 +86,6 @@ jobs:
         id: tgate
         run: |
           set -euo pipefail
-          # allow manual override
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.skip_time_gate || 'false' }}" == "true" ]]; then
             echo "run_ok=true" >> "$GITHUB_OUTPUT"
             echo "⏭️ Time gate skipped by manual override" >> "$GITHUB_STEP_SUMMARY"
@@ -98,7 +94,7 @@ jobs:
 
           export TZ=America/Los_Angeles
           NOW_PT="$(date +%H:%M)"
-          DOW="$(date +%u)"     # 1..7
+          DOW="$(date +%u)"
           if [[ "$DOW" -gt 5 ]]; then
             echo "run_ok=false" >> "$GITHUB_OUTPUT"
             echo "⛔ Weekend — skipping" >> "$GITHUB_STEP_SUMMARY"
@@ -119,9 +115,6 @@ jobs:
             echo "⏸️ Outside window: ${NOW_PT} vs ${TARGET_PT}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # ---------------------------
-  # 2) PRODUCER
-  # ---------------------------
   producer:
     needs: init-time-gate
     if: needs.init-time-gate.outputs.run_ok == 'true'
@@ -136,7 +129,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       - name: Install system deps
         run: |
@@ -145,9 +139,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends curl jq coreutils dos2unix
           sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
 
-      - name: Setup Python ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
         uses: actions/setup-python@v5
-        with: { python-version: ${{ env.PYTHON_VERSION }} }
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Create requirements.txt (deterministic)
         run: |
@@ -157,7 +152,7 @@ jobs:
             'numpy==1.26.4' \
             'python-dateutil==2.9.0.post0' > requirements.txt
 
-      - name: Install Python deps
+      - name: Install Python deps (deterministic)
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
           PIP_NO_INPUT: "1"
@@ -191,12 +186,14 @@ jobs:
 
       - name: Run main LEAPS script
         if: steps.skip.outputs.already == 'false'
-        env: { TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }} }
+        env:
+          TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
         run: python leaps_batched_cached.py
 
       - name: Build Option P/L (fallback-safe)
         if: steps.skip.outputs.already == 'false'
-        env: { TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }} }
+        env:
+          TRADIER_TOKEN: ${{ secrets.TRADIER_TOKEN }}
         run: |
           if [[ -f tools/option_pl_builder.py ]]; then
             python tools/option_pl_builder.py || echo "::warning::option_pl_builder failed"
@@ -204,7 +201,8 @@ jobs:
 
       - name: Enrich with intraday VWAP (PYTHONPATH set)
         if: steps.skip.outputs.already == 'false'
-        env: { PYTHONPATH: ${{ github.workspace }} }
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           if [[ -f tools/enrich_overlay_with_vwap.py ]]; then
             python tools/enrich_overlay_with_vwap.py --overlay overlay_vwap_macd_rsi.csv || echo "::warning::VWAP enrich failed"
@@ -213,7 +211,8 @@ jobs:
       - name: Move artifacts into date dir (if new)
         if: steps.skip.outputs.already == 'false'
         id: resolve-dd
-        env: { DD: ${{ needs.init-time-gate.outputs.date_dir }} }
+        env:
+          DD: ${{ needs.init-time-gate.outputs.date_dir }}
         run: |
           set -euo pipefail
           DEST="data/${DD}"
@@ -223,7 +222,6 @@ jobs:
           done
           echo "dd_effective=${DD}" >> "$GITHUB_OUTPUT"
 
-      # --- ALWAYS REFRESH METADATA (even if producer skipped) ---
       - name: Build/refresh latest.json & analysis_digest.json (always)
         if: ${{ always() }}
         id: meta
@@ -231,13 +229,9 @@ jobs:
           DD_REQ: ${{ needs.init-time-gate.outputs.date_dir }}
         run: |
           set -euo pipefail
-
-          # pick a folder: requested DD if it has overlay; else newest available
           pick_folder() {
             local dd="$1"
-            if [[ -s "data/${dd}/overlay_vwap_macd_rsi.csv" ]]; then
-              echo "${dd}"; return 0
-            fi
+            if [[ -s "data/${dd}/overlay_vwap_macd_rsi.csv" ]]; then echo "${dd}"; return 0; fi
             if [[ -d data ]]; then
               find data -maxdepth 1 -type d -name "20*" -printf '%f\n' | sort | tac | \
                 while read d; do
@@ -246,19 +240,15 @@ jobs:
             fi
             echo ""
           }
-
           DD_USE="$(pick_folder "${DD_REQ}")"
           if [[ -z "${DD_USE}" ]]; then
             echo "::error::No usable data folder (missing overlay_vwap_macd_rsi.csv)"; exit 1
           fi
 
-          # latest.json
-          jq -n \
-            --arg dd "${DD_USE}" \
-            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          jq -n --arg dd "${DD_USE}" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{date_dir: ("data/" + $dd), generated_utc: $ts}' > latest.json
 
-          # analysis_digest.json
+          export DD_USE
           python - <<'PY'
           import os, json, pandas as pd
           from datetime import datetime
@@ -289,8 +279,6 @@ jobs:
           with open("analysis_digest.json","w") as f:
               json.dump(digest,f,indent=2)
           PY
-        env:
-          DD_USE: ${{ steps.resolve-dd.outputs.dd_effective || needs.init-time-gate.outputs.date_dir }}
 
       - name: Commit artifacts (metadata always; data dir only when new)
         if: ${{ always() }}
@@ -313,7 +301,6 @@ jobs:
           mkdir -p "pages_pub/data/${DD}"
           [[ -d "data/${DD}" ]] && cp -a "data/${DD}/." "pages_pub/data/${DD}/"
           cp -a latest.json analysis_digest.json pages_pub/
-          # simple index
           cat > pages_pub/index.html <<'HTML'
           <!doctype html><meta charset="utf-8">
           <title>LEAPS Data</title>
@@ -340,17 +327,16 @@ jobs:
             find data -maxdepth 1 -type d -name "20*" -mtime +${DATA_RETENTION_DAYS} -print -exec rm -rf {} + || true
           fi
 
-  # ---------------------------
-  # 3) CONSUMER (unchanged logic; uses latest.json first)
-  # ---------------------------
   consumer:
     needs: [init-time-gate, producer]
     if: needs.init-time-gate.outputs.run_ok == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 12
-    permissions: { contents: read }
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install system deps
         run: |
@@ -404,9 +390,6 @@ jobs:
               "data/${DD}/gapdown_above_100sma.csv" gap.csv
           fi
 
-  # ---------------------------
-  # 4) NOTIFY
-  # ---------------------------
   notify:
     needs: [init-time-gate, producer, consumer]
     if: always()
