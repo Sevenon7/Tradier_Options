@@ -128,7 +128,7 @@ jobs:
       already: ${{ steps.skip.outputs.already }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -140,7 +140,7 @@ jobs:
           sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -282,7 +282,7 @@ jobs:
 
       - name: Commit artifacts (metadata always; data dir only when new)
         if: ${{ always() }}
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "LEAPS: refresh pointers & artifacts"
           branch: ${{ env.BRANCH }}
@@ -336,7 +336,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install system deps
         run: |
