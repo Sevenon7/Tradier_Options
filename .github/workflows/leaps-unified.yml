@@ -264,37 +264,55 @@ jobs:
           DDIR: ${{ steps.eff.outputs.dir }}
         run: |
           set -euo pipefail
+    
+          # latest.json
           jq -n \
             --arg dd "data/${DDIR}" \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{date_dir:$dd,generated_utc:$ts}' > latest.json
-
+    
+          # analysis_digest.json (no pandas)
           python - <<'PY'
-          import os, json, pandas as pd
+          import os, csv, json
           dd = os.environ["DDIR"]
           base = f"data/{dd}"
-          digest = {"date_dir": base, "files": {}}
-
-          def meta(name, cols=None, n=30):
-              p = f"{base}/{name}"
-              if not os.path.exists(p): return {"status":"missing"}
+    
+          def meta(fn, cols=None, n=30):
+              p = f"{base}/{fn}"
+              if not os.path.exists(p):
+                  return {"status": "missing"}
               try:
-                  df = pd.read_csv(p)
-                  out = {"status":"ok","rows":int(df.shape[0]),"columns":int(df.shape[1])}
-                  if cols:
-                      cols=[c for c in cols if c in df.columns]
-                      if cols:
-                          out["preview"]=df[cols].head(n).to_dict(orient="records")
-                  return out
+                  with open(p, newline='') as f:
+                      r = csv.DictReader(f)
+                      rows = 0
+                      preview = []
+                      for row in r:
+                          rows += 1
+                          if len(preview) < n:
+                              if cols:
+                                  out = {k: row.get(k) for k in cols if k in (r.fieldnames or [])}
+                              else:
+                                  out = row
+                              preview.append(out)
+                      return {
+                          "status": "ok",
+                          "rows": rows,
+                          "columns": len(r.fieldnames or []),
+                          "preview": preview
+                      }
               except Exception as e:
-                  return {"status":"error","error":str(e)}
-
-          digest["files"]["overlay"]=meta("overlay_vwap_macd_rsi.csv",
-              ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"])
-          digest["files"]["option_pl"]=meta("option_pl.csv")
-          digest["files"]["gap"]=meta("gapdown_above_100sma.csv")
-
-          with open("analysis_digest.json","w") as f: json.dump(digest,f,indent=2)
+                  return {"status": "error", "error": str(e)}
+    
+          digest = {"date_dir": base, "files": {}}
+          digest["files"]["overlay"] = meta(
+              "overlay_vwap_macd_rsi.csv",
+              ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"]
+          )
+          digest["files"]["option_pl"] = meta("option_pl.csv")
+          digest["files"]["gap"]       = meta("gapdown_above_100sma.csv")
+    
+          with open("analysis_digest.json","w") as f:
+              json.dump(digest, f, indent=2)
           PY
 
       - name: Commit pointers + digest
