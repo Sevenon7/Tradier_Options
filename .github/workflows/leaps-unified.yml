@@ -413,21 +413,144 @@ jobs:
 # 4) CONSUMER (optional verification)
 # =========================
   consumer:
-    needs: [init-time-gate, publish]
+    # wait for publish so Pages has a chance to go live
+    needs: [init-time-gate, producer, publish]
     if: needs.init-time-gate.outputs.run_ok == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 12
+    permissions:
+      contents: read
 
-      - name: Verify published pointers
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure OS tools
         run: |
           set -euo pipefail
-          test -s latest.json
-          dd="$(jq -r '.date_dir' latest.json)"
-          echo "latest.json → ${dd}" >> "$GITHUB_STEP_SUMMARY"
-          test -s analysis_digest.json
-          echo "✅ analysis_digest.json present" >> "$GITHUB_STEP_SUMMARY"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends curl jq coreutils
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+      # ⬇️ this replaces the brittle step that was failing
+      - name: Verify published pointers (Pages → jsDelivr → raw; with retries)
+        id: verify
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          BRANCH: ${{ env.BRANCH }}
+        run: |
+          set -euo pipefail
+
+          # tiny helper: fetch URL with exponential backoff; success if HTTP 200 and non-empty body
+          fetch_json() {
+            local url="$1"
+            local out="$2"
+            local delay=1
+            for i in {1..8}; do
+              code="$(curl -sS -L --connect-timeout 5 --max-time 15 -w '%{http_code}' -o "${out}" "${url}" || true)"
+              if [[ "$code" == "200" && -s "${out}" ]]; then
+                echo "OK ${url}"
+                return 0
+              fi
+              sleep "$delay"
+              delay=$(( delay < 10 ? delay*2 : 10 ))
+            done
+            echo "MISS ${url}"
+            return 1
+          }
+
+          PAGES_URL="https://${OWNER}.github.io/${REPO_NAME}/latest.json"
+          JSDL_URL="https://cdn.jsdelivr.net/gh/${OWNER}/${REPO_NAME}@${BRANCH}/latest.json"
+          RAW_URL="https://raw.githubusercontent.com/${OWNER}/${REPO_NAME}/${BRANCH}/latest.json"
+
+          SRC=""
+          if fetch_json "${PAGES_URL}" ptr.json; then SRC="${PAGES_URL}";
+          elif fetch_json "${JSDL_URL}" ptr.json; then SRC="${JSDL_URL}";
+          elif fetch_json "${RAW_URL}"  ptr.json; then SRC="${RAW_URL}";
+          fi
+
+          DD=""
+          if [[ -n "${SRC}" ]]; then
+            # If jq fails, don't crash; just leave DD empty so we can fall back.
+            DD="$(jq -r '.date_dir | sub("^data/";"") // empty' ptr.json 2>/dev/null || true)"
+          fi
+
+          # Fallback to newest directory in repo if pointer not available or wrong.
+          if [[ -z "${DD}" || ! -d "data/${DD}" ]]; then
+            FALLBACK="$(find data -maxdepth 1 -type d -name '20*' -printf '%f\n' | sort | tail -1 || true)"
+            if [[ -n "${FALLBACK}" && -d "data/${FALLBACK}" ]]; then
+              DD="${FALLBACK}"
+              SRC="${SRC:-'repo fallback (newest dir)'}"
+            fi
+          fi
+
+          if [[ -z "${DD}" ]]; then
+            echo "::error::Could not resolve a valid date_dir from Pages/jsDelivr/raw and no local data directory was found."
+            exit 1
+          fi
+
+          echo "date_dir=${DD}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 🔎 Consumer pointer resolution"
+            echo "- Source used: ${SRC}"
+            echo "- Resolved date_dir: \`${DD}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch overlay/PL/gap (Pages → jsDelivr → raw; then local)
+        env:
+          DD: ${{ steps.verify.outputs.date_dir }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          BRANCH: ${{ env.BRANCH }}
+        run: |
+          set -euo pipefail
+
+          pull_one() {
+            local rel="$1" dst="$2"
+            local pages="https://${OWNER}.github.io/${REPO_NAME}/${rel}"
+            local jsdl="https://cdn.jsdelivr.net/gh/${OWNER}/${REPO_NAME}@${BRANCH}/${rel}"
+            local raw="https://raw.githubusercontent.com/${OWNER}/${REPO_NAME}/${BRANCH}/${rel}"
+
+            for u in "$pages" "$jsdl" "$raw"; do
+              if curl -fLsS "$u" -o "$dst"; then
+                echo "Fetched $rel from $u"
+                return 0
+              fi
+            done
+            # final local fallback
+            if [[ -s "$rel" ]]; then
+              cp "$rel" "$dst"
+              echo "Copied local $rel"
+              return 0
+            fi
+            return 1
+          }
+
+          mkdir -p work
+          pull_one "data/${DD}/overlay_vwap_macd_rsi.csv" work/overlay.csv
+          pull_one "data/${DD}/option_pl.csv"            work/option_pl.csv || true
+          pull_one "data/${DD}/gapdown_above_100sma.csv" work/gap.csv       || true
+
+          # basic validation
+          if [[ ! -s work/overlay.csv ]]; then
+            echo "::error::overlay.csv is missing/empty after fetch attempts"
+            exit 1
+          fi
+
+          {
+            echo "### 📊 Consumer fetch summary"
+            for f in overlay.csv option_pl.csv gap.csv; do
+              if [[ -s "work/$f" ]]; then
+                rows=$(tail -n +2 "work/$f" | wc -l | tr -d ' ')
+                size=$(stat -c%s "work/$f")
+                echo "- $f: ${rows} rows, ${size} bytes"
+              else
+                echo "- $f: (missing)"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
 # =========================
 # 5) NOTIFY
