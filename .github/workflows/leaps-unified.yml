@@ -151,7 +151,7 @@ jobs:
       already: ${{ steps.skip.outputs.already }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -163,7 +163,7 @@ jobs:
           sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -264,7 +264,7 @@ jobs:
 
       - name: Commit data artifacts
         if: steps.skip.outputs.already == 'false'
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           branch: ${{ env.BRANCH }}
           commit_message: "LEAPS data: data/${{ steps.collect.outputs.dir }}"
@@ -292,7 +292,7 @@ jobs:
       pages: write
     steps:
       - name: Checkout latest main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0
@@ -383,7 +383,7 @@ jobs:
           jq -e '.files.overlay' analysis_digest.json >/dev/null
 
       - name: Commit pointers + digest (main)
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           branch: main
           commit_message: "LEAPS: refresh pointers & digest (data/${{ steps.eff.outputs.dir }})"
@@ -423,7 +423,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Ensure OS tools
         run: |
