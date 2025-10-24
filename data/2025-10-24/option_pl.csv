@@ -1,3 +1,3 @@
 Contract,OCC,Bid,Ask,Last,MidUsed,Entry,Contracts,P/L($),P/L(%),IV,source,quote_status,spot_status,spot,strike,type,root,expiry,note
-META 700C Feb '26,META260220C00700000,,,,36.74,109.13,1,-7239.1,-66.33,,intrinsic,error,ok,736.74,700.0,CALL,META,2026-02-20,
-MSTU 5C Mar '26,MSTU260320C00005000,,,,0.0,1.86,20,-3720.0,-100.0,,intrinsic,error,ok,3.52,5.0,CALL,MSTU,2026-03-20,
+META 700C Feb '26,META260220C00700000,,,,35.37,109.13,1,-7376.25,-67.59,,intrinsic,error,ok,735.37,700.0,CALL,META,2026-02-20,
+MSTU 5C Mar '26,MSTU260320C00005000,,,,0.0,1.86,20,-3720.0,-100.0,,intrinsic,error,ok,3.54,5.0,CALL,MSTU,2026-03-20,
