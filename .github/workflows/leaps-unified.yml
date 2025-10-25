@@ -250,144 +250,150 @@ jobs:
   # 3) PUBLISH (latest.json + analysis_digest.json + Pages)
   # ============================================
   publish:
+    name: publish
     needs: [init, producer]
     if: needs.init.outputs.run_ok == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
     permissions:
       contents: write
       pages: write
+  
     steps:
+      - name: Set up job
+        run: echo "Publish starting…"
+  
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+  
+      # pandas is required to build analysis_digest.json
+      - name: Setup Python (for digest)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+  
+      - name: Install digest deps
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+          PIP_NO_INPUT: "1"
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pandas==2.2.2
+  
       - name: Determine effective data_dir
-        id: resolve
+        id: datedir
         run: |
           set -euo pipefail
-          use="${{ needs.producer.outputs.out_dir }}"
-          if [[ -n "$use" && -s "data/${use}/overlay_vwap_macd_rsi.csv" ]]; then
-            echo "dir=$use" >> "$GITHUB_OUTPUT"; exit 0
+  
+          cand=""
+  
+          # 1) Try producer output(s)
+          PROD="${{ needs.producer.outputs.dir_effective }}"
+          if [[ -z "$PROD" ]]; then
+            PROD="${{ needs.producer.outputs.produced_date }}"
           fi
-          if [[ -s latest.json ]]; then
-            L=$(jq -r '.date_dir // empty' latest.json | sed 's|^data/||')
-            if [[ -n "$L" && -s "data/${L}/overlay_vwap_macd_rsi.csv" ]]; then
-              echo "dir=$L" >> "$GITHUB_OUTPUT"; exit 0
+          if [[ -n "$PROD" && -s "data/${PROD}/overlay_vwap_macd_rsi.csv" ]]; then
+            cand="$PROD"
+            echo "Using producer output: $cand"
+          fi
+  
+          # 2) Try latest.json pointer
+          if [[ -z "$cand" && -s latest.json ]]; then
+            ptr="$(jq -r '.date_dir // empty' latest.json | sed 's#^data/##')"
+            if [[ -n "$ptr" && -s "data/${ptr}/overlay_vwap_macd_rsi.csv" ]]; then
+              cand="$ptr"
+              echo "Using latest.json pointer: $cand"
             fi
           fi
-          if [[ -d data ]]; then
-            N=$(find data -maxdepth 1 -type d -name "20*" -printf '%f\n' | sort | tail -1)
-            if [[ -n "$N" && -s "data/${N}/overlay_vwap_macd_rsi.csv" ]]; then
-              echo "dir=$N" >> "$GITHUB_OUTPUT"; exit 0
+  
+          # 3) Try newest dated folder
+          if [[ -z "$cand" && -d data ]]; then
+            last="$(ls -1 data | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort | tail -1 || true)"
+            if [[ -n "$last" && -s "data/${last}/overlay_vwap_macd_rsi.csv" ]]; then
+              cand="$last"
+              echo "Using newest folder: $cand"
             fi
           fi
-          echo "::error::No valid data directory found with overlay CSV"
-          exit 1
-
+  
+          if [[ -z "$cand" ]]; then
+            echo "::error::No valid data directory found with overlay CSV"
+            exit 1
+          fi
+  
+          echo "dir=$cand" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 📅 Publish source"
+            echo "- **data_dir:** \`data/$cand\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+  
       - name: Build latest.json + analysis_digest.json
+        env:
+          DD: ${{ steps.datedir.outputs.dir }}
         run: |
           set -euo pipefail
-          export DD="${{ steps.resolve.outputs.dir }}"   # <-- make ENV visible to Python
-          TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-          # sanity
-          [[ -s "data/${DD}/overlay_vwap_macd_rsi.csv" ]] || { echo "::error::overlay missing under data/${DD}"; exit 1; }
-
-          # latest.json pointer
-          jq -n --arg dd "$DD" --arg ts "$TS" '{date_dir: ("data/"+$dd), generated_utc: $ts}' > latest.json
-
-          # analysis_digest.json (robust; self-healing dir resolution)
+  
+          # latest.json
+          jq -n \
+            --arg dd "$DD" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{date_dir: ("data/" + $dd), generated_utc: $ts}' > latest.json
+  
+          # analysis_digest.json
           python - <<'PY'
-          import os, json, re, glob
-          import pandas as pd
-
-          def pick_dir():
-              dd = os.environ.get("DD","").strip()
-              if dd and os.path.exists(f"data/{dd}/overlay_vwap_macd_rsi.csv"):
-                  return dd
-              if os.path.exists("latest.json"):
-                  try:
-                      j=json.load(open("latest.json","r",encoding="utf-8"))
-                      ptr=(j.get("date_dir") or "").replace("data/","")
-                      if re.fullmatch(r"\d{4}-\d{2}-\d{2}", ptr) and os.path.exists(f"data/{ptr}/overlay_vwap_macd_rsi.csv"):
-                          return ptr
-                  except Exception:
-                      pass
-              cands=sorted([p.split("/",1)[-1] for p in glob.glob("data/20*") if os.path.isdir(p)])
-              for d in reversed(cands):
-                  if os.path.exists(f"data/{d}/overlay_vwap_macd_rsi.csv"):
-                      return d
-              raise SystemExit("no valid data dir with overlay")
-
-          dd = pick_dir()
-          base=f"data/{dd}"
-          digest={"date_dir": f"data/{dd}"}
-
-          def meta(path, cols=None, n=30):
-              if not os.path.exists(path): return {"status":"missing"}
+          import os, json, pandas as pd
+          dd = os.environ["DD"]
+          base = f"data/{dd}"
+          out = {"date_dir": base, "files": {}}
+  
+          def meta(path, cols=None):
+              if not os.path.exists(path):
+                  return {"status":"missing"}
               try:
-                  df=pd.read_csv(path)
-                  out={"status":"ok","rows":int(df.shape[0]),"columns":int(df.shape[1])}
+                  df = pd.read_csv(path)
+                  info = {"status":"ok","rows":int(df.shape[0]),"columns":int(df.shape[1])}
                   if cols:
-                      have=[c for c in cols if c in df.columns]
-                      if have:
-                          out["preview"]=df[have].head(n).to_dict(orient="records")
-                  return out
+                      cols=[c for c in cols if c in df.columns]
+                      if cols:
+                          info["preview"]=df[cols].head(20).to_dict("records")
+                  return info
               except Exception as e:
                   return {"status":"error","error":str(e)}
-
-          digest["overlay"]=meta(f"{base}/overlay_vwap_macd_rsi.csv",
-                                 ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"])
-          digest["option_pl"]=meta(f"{base}/option_pl.csv")
-          digest["gap"]=meta(f"{base}/gapdown_above_100sma.csv")
-
-          with open("analysis_digest.json","w",encoding="utf-8") as f:
-              json.dump(digest,f,indent=2)
+  
+          out["files"]["overlay"] = meta(
+              f"{base}/overlay_vwap_macd_rsi.csv",
+              ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"]
+          )
+          out["files"]["option_pl"] = meta(f"{base}/option_pl.csv")
+          out["files"]["gap"]       = meta(f"{base}/gapdown_above_100sma.csv")
+  
+          with open("analysis_digest.json","w") as f:
+              json.dump(out,f,indent=2)
+          print("Wrote analysis_digest.json for", base)
           PY
-
-          # Optional belt-and-suspenders fallback (legacy reader)
-          if [[ ! -s analysis_digest.json && -f tools/consumer_latest_reader.py ]]; then
-            echo "::notice::Primary digest build empty; trying tools/consumer_latest_reader.py"
-            PYTHONPATH="${GITHUB_WORKSPACE}" python tools/consumer_latest_reader.py || true
-          fi
-
-          test -s latest.json || { echo "::error::latest.json missing"; exit 1; }
-          test -s analysis_digest.json || { echo "::error::analysis_digest.json missing"; exit 1; }
-          echo "✅ Built latest.json + analysis_digest.json for data/${DD}" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Commit pointers (latest.json + analysis_digest.json)
-        uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842
+  
+      - name: Commit pointers + digest
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "LEAPS: update latest.json + analysis_digest.json"
-          add_options: "-A"
+          commit_message: "LEAPS: refresh pointers & digest (data/${{ steps.datedir.outputs.dir }})"
           file_pattern: |
             latest.json
             analysis_digest.json
-
+  
       - name: Prepare GitHub Pages payload
         run: |
           set -euo pipefail
-          DD="${{ steps.resolve.outputs.dir }}"
+          DD="${{ steps.datedir.outputs.dir }}"
           rm -rf pages_pub
           mkdir -p "pages_pub/data/${DD}"
           cp -a "data/${DD}/." "pages_pub/data/${DD}/"
-          cp -a latest.json analysis_digest.json pages_pub/
-          # simple index
-          cat > pages_pub/index.html <<'HTML'
-          <!doctype html><html><head><meta charset="utf-8"><title>LEAPS Data</title>
-          <style>body{font-family:system-ui,Arial,sans-serif;max-width:900px;margin:40px auto;padding:0 16px}
-          code,pre{background:#f6f8fa;padding:8px 10px;border-radius:6px}</style></head><body>
-          <h1>📊 LEAPS Data</h1>
-          <ul>
-            <li><a href="latest.json">latest.json</a></li>
-            <li><a href="analysis_digest.json">analysis_digest.json</a></li>
-          </ul>
-          <p>Updated: <script>document.write(new Date().toISOString())</script></p>
-          </body></html>
-          HTML
-
+          cp latest.json analysis_digest.json pages_pub/
+          echo "Prepared $(find pages_pub -type f | wc -l) files"
+  
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@373f7f263a76c20808c831209c920827a82a2847  # v4.0.0
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: pages_pub
