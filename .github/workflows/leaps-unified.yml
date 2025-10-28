@@ -250,149 +250,161 @@ jobs:
   # 3) PUBLISH (latest.json + analysis_digest.json + Pages)
   # ============================================
   publish:
-    name: publish
-    needs: [init, producer]
+    needs: [init, producer]           # keep your existing needs
     if: needs.init.outputs.run_ok == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 10
     permissions:
       contents: write
       pages: write
+      id-token: write
   
     steps:
-      - name: Set up job
-        run: echo "Publish starting…"
-  
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0             # we need full history for rebase
   
-      # pandas is required to build analysis_digest.json
+      - name: Determine effective data_dir
+        id: datedir
+        shell: bash
+        run: |
+          set -euo pipefail
+          TODAY="$(date -u +%Y-%m-%d)"
+          CAND=""
+          # Prefer pointer if it exists & points to an existing overlay
+          if [[ -s latest.json ]]; then
+            ptr="$(jq -r '.date_dir // empty' latest.json | sed 's|^data/||')"
+            [[ -n "$ptr" && -s "data/$ptr/overlay_vwap_macd_rsi.csv" ]] && CAND="$ptr"
+          fi
+          # Otherwise pick newest data dir that has overlay
+          if [[ -z "$CAND" && -d data ]]; then
+            CAND="$(find data -maxdepth 1 -type d -name '20*' \
+                     -exec test -s '{}/overlay_vwap_macd_rsi.csv' ';' -print \
+                     | sed 's|^data/||' | sort | tail -1 || true)"
+          fi
+          if [[ -z "$CAND" ]]; then
+            echo "::error::No valid data directory found with overlay CSV"
+            exit 1
+          fi
+          echo "dd=$CAND" >> "$GITHUB_OUTPUT"
+          echo "✅ Using data dir: $CAND" >> "$GITHUB_STEP_SUMMARY"
+  
+      # --- ensure pandas is available to build digest ---
       - name: Setup Python (for digest)
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
   
-      - name: Install digest deps
-        env:
-          PIP_DISABLE_PIP_VERSION_CHECK: "1"
-          PIP_NO_INPUT: "1"
+      - name: Install tiny deps (digest)
+        shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          pip install pandas==2.2.2
-  
-      - name: Determine effective data_dir
-        id: datedir
-        run: |
-          set -euo pipefail
-  
-          cand=""
-  
-          # 1) Try producer output(s)
-          PROD="${{ needs.producer.outputs.dir_effective }}"
-          if [[ -z "$PROD" ]]; then
-            PROD="${{ needs.producer.outputs.produced_date }}"
-          fi
-          if [[ -n "$PROD" && -s "data/${PROD}/overlay_vwap_macd_rsi.csv" ]]; then
-            cand="$PROD"
-            echo "Using producer output: $cand"
-          fi
-  
-          # 2) Try latest.json pointer
-          if [[ -z "$cand" && -s latest.json ]]; then
-            ptr="$(jq -r '.date_dir // empty' latest.json | sed 's#^data/##')"
-            if [[ -n "$ptr" && -s "data/${ptr}/overlay_vwap_macd_rsi.csv" ]]; then
-              cand="$ptr"
-              echo "Using latest.json pointer: $cand"
-            fi
-          fi
-  
-          # 3) Try newest dated folder
-          if [[ -z "$cand" && -d data ]]; then
-            last="$(ls -1 data | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort | tail -1 || true)"
-            if [[ -n "$last" && -s "data/${last}/overlay_vwap_macd_rsi.csv" ]]; then
-              cand="$last"
-              echo "Using newest folder: $cand"
-            fi
-          fi
-  
-          if [[ -z "$cand" ]]; then
-            echo "::error::No valid data directory found with overlay CSV"
-            exit 1
-          fi
-  
-          echo "dir=$cand" >> "$GITHUB_OUTPUT"
-          {
-            echo "### 📅 Publish source"
-            echo "- **data_dir:** \`data/$cand\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          python -m pip install --upgrade pip >/dev/null
+          pip install pandas==2.2.2 python-dateutil==2.9.0.post0 >/dev/null
   
       - name: Build latest.json + analysis_digest.json
+        id: build_digest
         env:
-          DD: ${{ steps.datedir.outputs.dir }}
+          DD: ${{ steps.datedir.outputs.dd }}
+        shell: bash
         run: |
           set -euo pipefail
-  
-          # latest.json
+          # Pointer
           jq -n \
-            --arg dd "$DD" \
+            --arg dd "data/${DD}" \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{date_dir: ("data/" + $dd), generated_utc: $ts}' > latest.json
+            '{date_dir:$dd, generated_utc:$ts}' > latest.json
   
-          # analysis_digest.json
+          # Digest
           python - <<'PY'
           import os, json, pandas as pd
           dd = os.environ["DD"]
           base = f"data/{dd}"
-          out = {"date_dir": base, "files": {}}
   
-          def meta(path, cols=None):
-              if not os.path.exists(path):
-                  return {"status":"missing"}
+          def meta(path, preview_cols=None, n=20):
+              m = {"status":"missing"}
+              if not os.path.exists(path): return m
               try:
                   df = pd.read_csv(path)
-                  info = {"status":"ok","rows":int(df.shape[0]),"columns":int(df.shape[1])}
-                  if cols:
-                      cols=[c for c in cols if c in df.columns]
+                  m = {"status":"ok","rows":int(len(df)),"columns":int(len(df.columns))}
+                  if preview_cols:
+                      cols = [c for c in preview_cols if c in df.columns]
                       if cols:
-                          info["preview"]=df[cols].head(20).to_dict("records")
-                  return info
+                          m["preview"] = df[cols].head(n).to_dict(orient="records")
+                  return m
               except Exception as e:
                   return {"status":"error","error":str(e)}
   
-          out["files"]["overlay"] = meta(
-              f"{base}/overlay_vwap_macd_rsi.csv",
-              ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"]
-          )
-          out["files"]["option_pl"] = meta(f"{base}/option_pl.csv")
-          out["files"]["gap"]       = meta(f"{base}/gapdown_above_100sma.csv")
-  
-          with open("analysis_digest.json","w") as f:
-              json.dump(out,f,indent=2)
-          print("Wrote analysis_digest.json for", base)
+          digest = {
+            "date_dir": f"data/{dd}",
+            "generated_utc": pd.Timestamp.utcnow().isoformat()+"Z",
+            "files": {
+              "overlay": meta(f"{base}/overlay_vwap_macd_rsi.csv",
+                ["Ticker","RSI14","MACD>Signal","VWAP","LastPx","Px_vs_VWAP","SMA100","Gap%","Guidance"]),
+              "option_pl": meta(f"{base}/option_pl.csv"),
+              "gap":      meta(f"{base}/gapdown_above_100sma.csv")
+            }
+          }
+          with open("analysis_digest.json","w") as f: json.dump(digest,f,indent=2)
           PY
   
-      - name: Commit pointers + digest
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "LEAPS: refresh pointers & digest (data/${{ steps.datedir.outputs.dir }})"
-          file_pattern: |
-            latest.json
-            analysis_digest.json
+          echo "📄 Built latest.json and analysis_digest.json" >> "$GITHUB_STEP_SUMMARY"
   
-      - name: Prepare GitHub Pages payload
+      # --- rebase-safe commit + push with retries ---
+      - name: Commit pointers + digest (rebase-safe)
+        env:
+          BRANCH: ${{ github.ref_name }}
+        shell: bash
         run: |
           set -euo pipefail
-          DD="${{ steps.datedir.outputs.dir }}"
-          rm -rf pages_pub
-          mkdir -p "pages_pub/data/${DD}"
-          cp -a "data/${DD}/." "pages_pub/data/${DD}/"
-          cp latest.json analysis_digest.json pages_pub/
-          echo "Prepared $(find pages_pub -type f | wc -l) files"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
   
-      - name: Deploy to GitHub Pages
+          git add latest.json analysis_digest.json
+          git commit -m "LEAPS: refresh pointers & digest (data/${{ steps.datedir.outputs.dd }})" || echo "no changes"
+  
+          tries=0
+          until [ $tries -ge 3 ]
+          do
+            git fetch origin "$BRANCH"
+            # rebase; if conflict, abort and try merge-as-fallback
+            if git rebase origin/"$BRANCH"; then
+              if git push origin HEAD:"$BRANCH"; then
+                echo "✅ Pushed after rebase"; exit 0
+              fi
+            else
+              git rebase --abort || true
+              git merge --no-edit origin/"$BRANCH" || true
+              if git push origin HEAD:"$BRANCH"; then
+                echo "✅ Pushed after merge"; exit 0
+              fi
+            fi
+            tries=$((tries+1))
+            echo "⏳ Retry $tries…" ; sleep $((5+5*tries))
+          done
+  
+          echo "::warning::Falling back to --force-with-lease"
+          git push --force-with-lease origin HEAD:"$BRANCH"
+  
+      # (optional) verify files exist locally and aren’t empty
+      - name: Verify artifacts present
+        shell: bash
+        run: |
+          test -s latest.json || (echo "::error::latest.json missing" && exit 1)
+          test -s analysis_digest.json || (echo "::error::analysis_digest.json missing" && exit 1)
+          echo "✅ Verified non-empty pointers"
+  
+      # --- page payload stays the same (if you publish Pages) ---
+      - name: Prepare GitHub Pages payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf pages_pub && mkdir -p pages_pub
+          cp -a latest.json analysis_digest.json pages_pub/
+          cp -a "data/${{ steps.datedir.outputs.dd }}" "pages_pub/${{ steps.datedir.outputs.dd }}"
+  
+      - name: Publish to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
