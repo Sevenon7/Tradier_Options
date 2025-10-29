@@ -282,24 +282,45 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CAND=""
-          # Prefer pointer if it exists & points to an existing overlay
+          # Ensure jq is present (used for pointer parsing)
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends jq > /dev/null
+      
+          # 1) Find newest dated dir that actually has the overlay CSV
+          NEWEST="$(find data -maxdepth 1 -mindepth 1 -type d -name '20*' -printf '%f\n' \
+                    | sort | tail -1 || true)"
+      
+          pick_newest=""
+          if [[ -n "${NEWEST}" && -s "data/${NEWEST}/overlay_vwap_macd_rsi.csv" ]]; then
+            pick_newest="${NEWEST}"
+          fi
+      
+          # 2) Read current pointer (if any)
+          ptr=""
           if [[ -s latest.json ]]; then
             ptr="$(jq -r '.date_dir // empty' latest.json | sed 's|^data/||')"
-            [[ -n "$ptr" && -s "data/$ptr/overlay_vwap_macd_rsi.csv" ]] && CAND="$ptr"
           fi
-          # Otherwise pick newest data dir that has overlay
-          if [[ -z "$CAND" && -d data ]]; then
-            CAND="$(find data -maxdepth 1 -type d -name '20*' \
-                     -exec test -s '{}/overlay_vwap_macd_rsi.csv' ';' -print \
-                     | sed 's|^data/||' | sort | tail -1 || true)"
-          fi
-          if [[ -z "$CAND" ]]; then
-            echo "::error::No valid data directory found with overlay CSV"
+      
+          # 3) Selection policy: newest overlay wins; fall back to pointer if newest invalid
+          if [[ -n "${pick_newest}" ]]; then
+            CAND="${pick_newest}"
+            REASON="newest"
+          elif [[ -n "${ptr}" && -s "data/${ptr}/overlay_vwap_macd_rsi.csv" ]]; then
+            CAND="${ptr}"
+            REASON="pointer-fallback"
+          else
+            echo "::error::No valid data directory found with overlay_vwap_macd_rsi.csv"
+            ls -la data || true
             exit 1
           fi
-          echo "dd=$CAND" >> "$GITHUB_OUTPUT"
-          echo "✅ Using data dir: $CAND" >> "$GITHUB_STEP_SUMMARY"
+      
+          echo "dd=${CAND}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 📂 Data directory selection"
+            echo "- Newest: ${NEWEST:-none}"
+            echo "- Pointer: ${ptr:-none}"
+            echo "- **Chosen:** ${CAND}  _(reason: ${REASON})_"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Python (for digest)
         uses: actions/setup-python@v5
@@ -447,23 +468,33 @@ jobs:
 
       - name: Resolve effective date_dir for consumer
         id: datedir
+        shell: bash
         run: |
           set -euo pipefail
-          CAND=""
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends jq > /dev/null
+      
+          NEWEST="$(find data -maxdepth 1 -mindepth 1 -type d -name '20*' -printf '%f\n' \
+                    | sort | tail -1 || true)"
+          ptr=""
           if [[ -s latest.json ]]; then
             ptr="$(jq -r '.date_dir // empty' latest.json | sed 's|^data/||')"
-            [[ -n "$ptr" && -s "data/${ptr}/overlay_vwap_macd_rsi.csv" ]] && CAND="$ptr"
           fi
-          if [[ -z "$CAND" && -d data ]]; then
-            CAND="$(find data -maxdepth 1 -type d -name '20*' \
-                     -exec test -s '{}/overlay_vwap_macd_rsi.csv' ';' -print \
-                     | sed 's|^data/||' | sort | tail -1 || true)"
+      
+          if [[ -n "${NEWEST}" && -s "data/${NEWEST}/overlay_vwap_macd_rsi.csv" ]]; then
+            CAND="${NEWEST}"
+            REASON="newest"
+          elif [[ -n "${ptr}" && -s "data/${ptr}/overlay_vwap_macd_rsi.csv" ]]; then
+            CAND="${ptr}"
+            REASON="pointer-fallback"
+          else
+            echo "::error::Could not resolve a valid data_dir for consumer"
+            ls -la data || true
+            exit 1
           fi
-          if [[ -z "$CAND" ]]; then
-            echo "::error::No valid data directory with overlay for consumer"; exit 1
-          fi
+      
           echo "date_dir=${CAND}" >> "$GITHUB_OUTPUT"
-          echo "### 📅 Consumer using: ${CAND}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### 📅 Consumer using: ${CAND} _(reason: ${REASON})_" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fetch overlay/PL/gap (Pages → jsDelivr → raw)
         env:
