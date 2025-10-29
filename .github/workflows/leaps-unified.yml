@@ -128,7 +128,6 @@ jobs:
           else
             echo "run_ok=false" >> "$GITHUB_OUTPUT"
             echo "⏸️ Outside window — skip." >> "$GITHUB_STEP_SUMMARY"
-          fi
 
   # ============================================
   # 2) PRODUCER
@@ -222,7 +221,7 @@ jobs:
               || echo "::warning::VWAP enrichment failed (non-critical)"
           fi
 
-      - name: Collect artifacts into date folder
+      - name: Collect artifacts into date folder (guard: overlay must exist)
         if: steps.skip.outputs.already == 'false'
         id: collect
         run: |
@@ -230,12 +229,20 @@ jobs:
           DD="${{ needs.init.outputs.date_dir }}"
           DEST="data/${DD}"
           mkdir -p "$DEST"
+          [[ -s overlay_vwap_macd_rsi.csv ]] || { echo "::error::overlay_vwap_macd_rsi.csv missing; abort"; exit 1; }
           moved=0
           for f in overlay_vwap_macd_rsi.csv option_pl.csv gapdown_above_100sma.csv vwap_missing.json; do
             if [[ -f "$f" ]]; then mv -f "$f" "$DEST/"; moved=$((moved+1)); fi
           done
           echo "date_dir=${DD}" >> "$GITHUB_OUTPUT"
           echo "📦 Moved ${moved} files to ${DEST}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sync main (ff-only or rebase) before commit
+        if: steps.skip.outputs.already == 'false'
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          (git merge --ff-only origin/main) || (git rebase origin/main || true)
 
       - name: Commit data dir
         if: steps.skip.outputs.already == 'false'
@@ -250,7 +257,7 @@ jobs:
   # 3) PUBLISH (latest.json + analysis_digest.json + Pages)
   # ============================================
   publish:
-    needs: [init, producer]           # keep your existing needs
+    needs: [init, producer]
     if: needs.init.outputs.run_ok == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -258,19 +265,23 @@ jobs:
       contents: write
       pages: write
       id-token: write
-  
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0             # we need full history for rebase
-  
+          fetch-depth: 0
+
+      - name: Install system deps (jq)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends jq coreutils
+
       - name: Determine effective data_dir
         id: datedir
         shell: bash
         run: |
           set -euo pipefail
-          TODAY="$(date -u +%Y-%m-%d)"
           CAND=""
           # Prefer pointer if it exists & points to an existing overlay
           if [[ -s latest.json ]]; then
@@ -289,20 +300,19 @@ jobs:
           fi
           echo "dd=$CAND" >> "$GITHUB_OUTPUT"
           echo "✅ Using data dir: $CAND" >> "$GITHUB_STEP_SUMMARY"
-  
-      # --- ensure pandas is available to build digest ---
+
       - name: Setup Python (for digest)
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-  
+
       - name: Install tiny deps (digest)
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip >/dev/null
           pip install pandas==2.2.2 python-dateutil==2.9.0.post0 >/dev/null
-  
+
       - name: Build latest.json + analysis_digest.json
         id: build_digest
         env:
@@ -310,18 +320,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Pointer
+          # Pointer (write only after dd is confirmed valid)
           jq -n \
             --arg dd "data/${DD}" \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{date_dir:$dd, generated_utc:$ts}' > latest.json
-  
+
           # Digest
           python - <<'PY'
           import os, json, pandas as pd
           dd = os.environ["DD"]
           base = f"data/{dd}"
-  
+
           def meta(path, preview_cols=None, n=20):
               m = {"status":"missing"}
               if not os.path.exists(path): return m
@@ -335,7 +345,7 @@ jobs:
                   return m
               except Exception as e:
                   return {"status":"error","error":str(e)}
-  
+
           digest = {
             "date_dir": f"data/{dd}",
             "generated_utc": pd.Timestamp.utcnow().isoformat()+"Z",
@@ -348,10 +358,9 @@ jobs:
           }
           with open("analysis_digest.json","w") as f: json.dump(digest,f,indent=2)
           PY
-  
+
           echo "📄 Built latest.json and analysis_digest.json" >> "$GITHUB_STEP_SUMMARY"
-  
-      # --- rebase-safe commit + push with retries ---
+
       - name: Commit pointers + digest (rebase-safe)
         env:
           BRANCH: ${{ github.ref_name }}
@@ -360,15 +369,14 @@ jobs:
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  
+
           git add latest.json analysis_digest.json
           git commit -m "LEAPS: refresh pointers & digest (data/${{ steps.datedir.outputs.dd }})" || echo "no changes"
-  
+
           tries=0
           until [ $tries -ge 3 ]
           do
             git fetch origin "$BRANCH"
-            # rebase; if conflict, abort and try merge-as-fallback
             if git rebase origin/"$BRANCH"; then
               if git push origin HEAD:"$BRANCH"; then
                 echo "✅ Pushed after rebase"; exit 0
@@ -383,27 +391,25 @@ jobs:
             tries=$((tries+1))
             echo "⏳ Retry $tries…" ; sleep $((5+5*tries))
           done
-  
+
           echo "::warning::Falling back to --force-with-lease"
           git push --force-with-lease origin HEAD:"$BRANCH"
-  
-      # (optional) verify files exist locally and aren’t empty
+
       - name: Verify artifacts present
         shell: bash
         run: |
           test -s latest.json || (echo "::error::latest.json missing" && exit 1)
           test -s analysis_digest.json || (echo "::error::analysis_digest.json missing" && exit 1)
           echo "✅ Verified non-empty pointers"
-  
-      # --- page payload stays the same (if you publish Pages) ---
+
       - name: Prepare GitHub Pages payload
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf pages_pub && mkdir -p pages_pub
+          rm -rf pages_pub && mkdir -p pages_pub/data
           cp -a latest.json analysis_digest.json pages_pub/
-          cp -a "data/${{ steps.datedir.outputs.dd }}" "pages_pub/${{ steps.datedir.outputs.dd }}"
-  
+          cp -a "data/${{ steps.datedir.outputs.dd }}" "pages_pub/data/${{ steps.datedir.outputs.dd }}"
+
       - name: Publish to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
@@ -443,19 +449,19 @@ jobs:
         id: datedir
         run: |
           set -euo pipefail
-          TODAY="$(date -u +%Y-%m-%d)"
           CAND=""
-
           if [[ -s latest.json ]]; then
             ptr="$(jq -r '.date_dir // empty' latest.json | sed 's|^data/||')"
-            if [[ -n "$ptr" && -s "data/${ptr}/overlay_vwap_macd_rsi.csv" ]]; then CAND="$ptr"; fi
+            [[ -n "$ptr" && -s "data/${ptr}/overlay_vwap_macd_rsi.csv" ]] && CAND="$ptr"
           fi
           if [[ -z "$CAND" && -d data ]]; then
-            last=$(find data -maxdepth 1 -type d -name "20*" -printf '%f\n' | sort | tail -1)
-            if [[ -n "$last" && -s "data/${last}/overlay_vwap_macd_rsi.csv" ]]; then CAND="$last"; fi
+            CAND="$(find data -maxdepth 1 -type d -name '20*' \
+                     -exec test -s '{}/overlay_vwap_macd_rsi.csv' ';' -print \
+                     | sed 's|^data/||' | sort | tail -1 || true)"
           fi
-          if [[ -z "$CAND" ]]; then CAND="$TODAY"; fi
-
+          if [[ -z "$CAND" ]]; then
+            echo "::error::No valid data directory with overlay for consumer"; exit 1
+          fi
           echo "date_dir=${CAND}" >> "$GITHUB_OUTPUT"
           echo "### 📅 Consumer using: ${CAND}" >> "$GITHUB_STEP_SUMMARY"
 
