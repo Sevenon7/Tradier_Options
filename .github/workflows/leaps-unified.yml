@@ -221,7 +221,7 @@ jobs:
               || echo "::warning::VWAP enrichment failed (non-critical)"
           fi
 
-      - name: Collect artifacts into date folder (guard: overlay must exist)
+      - name: Collect artifacts into date folder (guard:overlay must exist)
         if: steps.skip.outputs.already == 'false'
         id: collect
         run: |
