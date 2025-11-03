@@ -144,12 +144,12 @@ jobs:
       already: ${{ steps.skip.outputs.already }}
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493  # v4.1.1
         with:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
+        uses: actions/setup-python@cfd55ca82492758d853442341ad4d8010466803a # v5.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -246,7 +246,7 @@ jobs:
 
       - name: Commit data dir
         if: steps.skip.outputs.already == 'false'
-        uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842 # v5
+        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v5
         with:
           commit_message: "LEAPS: data for ${{ steps.collect.outputs.date_dir }}"
           add_options: "-A"
@@ -268,7 +268,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -323,7 +323,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Python (for digest)
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -451,7 +451,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Install minimal tools
         run: |
@@ -568,7 +568,7 @@ jobs:
 
       - name: Open issue on failure
         if: steps.status.outputs.overall == 'failure' && github.event_name != 'workflow_dispatch'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const date = new Date().toISOString().slice(0,10);
